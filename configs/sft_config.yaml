@@ -1,0 +1,52 @@
+model:
+  name: "./models/llama31-70b-eurlex-cpt-final"
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"
+  use_cache: false
+
+training:
+  output_dir: "./checkpoints/sft"
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 8
+  learning_rate: 5.0e-6
+  num_train_epochs: 3
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  logging_steps: 10
+  save_steps: 500
+  eval_steps: 500
+  save_total_limit: 10
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+
+  bf16: true
+  fp8: true
+  gradient_checkpointing: true
+  deepspeed: "configs/ds_config_zero3_sft.json"
+  report_to: "wandb"
+
+transformer_engine:
+  enabled: true
+  fp8_format: "hybrid"
+  fp8_amax_history_len: 1024
+
+data:
+  train_file: "data/sft/train/sft_train_shard_*.jsonl"
+  validation_file: "data/sft/validation/sft_val.jsonl"
+  max_seq_length: 2048
+  preprocessing_num_workers: 8
+
+sft:
+  mask_inputs: true
+  system_prompt: |
+    You are a specialized legal assistant for European Union law. You provide accurate information about EU regulations, directives, and legal documents from EUR-Lex. Always cite specific articles and CELEX numbers when answering.
+
+    Disclaimer: This is an AI assistant and does not constitute legal advice. Always consult official EUR-Lex sources and legal professionals for authoritative information.
+
+wandb:
+  project: "llama31-70b-eurlex"
+  name: "sft-training"
+  entity: null
