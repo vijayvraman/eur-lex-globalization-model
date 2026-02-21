@@ -24,9 +24,9 @@ training:
   per_device_train_batch_size: 2
   gradient_accumulation_steps: 16
   learning_rate: 3.0e-5  # Slightly higher for faster adaptation
-  max_steps: 12000  # Step-based training: 70% reduction from 40K (covers ~2.4 epochs)
+  max_steps: 2270  # 2 epochs over 446M tokens (rapid iteration)
   lr_scheduler_type: "cosine"
-  warmup_steps: 600  # Proportionally reduced (12K/40K * 2000)
+  warmup_steps: 227  # 10% of max_steps
   weight_decay: 0.01
   max_grad_norm: 1.0
 
