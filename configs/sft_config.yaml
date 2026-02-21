@@ -1,5 +1,5 @@
 model:
-  name: "./models/llama31-70b-eurlex-cpt-final"
+  name: "./models/llama33-70b-eurlex-cpt-final"
   torch_dtype: "bfloat16"
   attn_implementation: "flash_attention_2"
   use_cache: false
@@ -47,6 +47,6 @@ sft:
     Disclaimer: This is an AI assistant and does not constitute legal advice. Always consult official EUR-Lex sources and legal professionals for authoritative information.
 
 wandb:
-  project: "llama31-70b-eurlex"
+  project: "llama33-70b-eurlex"
   name: "sft-training"
   entity: null

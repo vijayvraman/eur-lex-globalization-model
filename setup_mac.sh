@@ -17,13 +17,21 @@ fi
 PYTHON_VERSION=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
 echo "Python version: $PYTHON_VERSION"
 
-if [ ! -d "venv" ]; then
+# Use .venv if it exists (PyCharm default), otherwise create venv
+if [ -d ".venv" ]; then
+    echo "Using existing .venv virtual environment..."
+    VENV_DIR=".venv"
+elif [ -d "venv" ]; then
+    echo "Using existing venv virtual environment..."
+    VENV_DIR="venv"
+else
     echo "Creating virtual environment..."
     python3 -m venv venv
+    VENV_DIR="venv"
 fi
 
 echo "Activating virtual environment..."
-source venv/bin/activate
+source $VENV_DIR/bin/activate
 
 echo "Upgrading pip..."
 pip install --upgrade pip
@@ -34,17 +42,17 @@ pip3 install torch torchvision torchaudio
 echo "Installing data processing dependencies..."
 # Install only what's needed for data processing
 pip3 install \
-    transformers>=4.36.0 \
-    datasets>=2.16.0 \
-    pyarrow>=14.0.0 \
-    pandas>=2.0.0 \
-    lxml>=4.9.0 \
-    beautifulsoup4>=4.12.0 \
-    tokenizers>=0.15.0 \
-    pyyaml>=6.0 \
-    tqdm>=4.66.0 \
-    numpy>=1.24.0 \
-    pytest>=7.4.0
+    "transformers>=4.36.0" \
+    "datasets>=2.16.0" \
+    "pyarrow>=14.0.0" \
+    "pandas>=2.0.0" \
+    "lxml>=4.9.0" \
+    "beautifulsoup4>=4.12.0" \
+    "tokenizers>=0.15.0" \
+    "pyyaml>=6.0" \
+    "tqdm>=4.66.0" \
+    "numpy>=1.24.0" \
+    "pytest>=7.4.0"
 
 echo ""
 echo "Verifying installations..."

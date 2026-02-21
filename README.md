@@ -1,10 +1,10 @@
-# EUR-Lex Legal Q&A Model: LLaMA 3.1 70B Fine-Tuning
+# EUR-Lex Legal Q&A Model: LLaMA 3.3 70B Fine-Tuning
 
-Train LLaMA 3.1 70B on 25GB FORMEX XML data (EN/FR/DE/ES/PT) for legal Q&A with citations using CPT and SFT with FP4 quantization on NVIDIA B200 GPUs.
+Train LLaMA 3.3 70B on 25GB FORMEX XML data (EN/FR/DE/ES/PT) for legal Q&A with citations using CPT and SFT with FP4 quantization on NVIDIA B200 GPUs.
 
 ## Overview
 
-- **Base Model**: LLaMA 3.1 70B Instruct
+- **Base Model**: LLaMA 3.3 70B Instruct
 - **Data**: 25GB FORMEX XML from EUR-Lex (5 languages)
 - **Hardware**: Mac Studio (data processing) + 4x NVIDIA B200 GPUs (training)
 - **Training**: CPT (domain adaptation) → SFT (instruction-tuning)
@@ -193,14 +193,14 @@ deepspeed --num_gpus=4 scripts/train_sft.py \
 
 ```bash
 python scripts/evaluate_model.py \
-  --model_path models/llama31-70b-eurlex-sft-final \
+  --model_path models/llama33-70b-eurlex-sft-final \
   --eval_dataset data/sft/validation/sft_test.jsonl \
   --output_file results/evaluation_report.json
 ```
 
 ## Model Comparison & QnA Testing
 
-Compare base LLaMA 3.1 70B vs fine-tuned model performance on legal Q&A tasks. This system generates test questions, runs both models, and produces detailed comparison reports.
+Compare base LLaMA 3.3 70B vs fine-tuned model performance on legal Q&A tasks. This system generates test questions, runs both models, and produces detailed comparison reports.
 
 ### Quick Start
 
@@ -214,7 +214,7 @@ python scripts/generate_test_set.py \
 **Step 2: Run comparison** (~5 minutes):
 ```bash
 python scripts/compare_models.py \
-  --base_model meta-llama/Llama-3.1-70B-Instruct \
+  --base_model meta-llama/Llama-3.3-70B-Instruct \
   --finetuned_model ./checkpoints/sft/final \
   --test_dataset data/test/test_qna_100.jsonl \
   --output_dir results/model_comparison \
@@ -496,7 +496,7 @@ See `configs/ds_config_zero3.json`:
 
 ### Benchmark Comparisons
 
-**vs. Base LLaMA 3.1 70B:**
+**vs. Base LLaMA 3.3 70B:**
 - ✓ Legal perplexity: 40% improvement (25 → 15)
 - ✓ Citation accuracy: From 20% → 85%+
 - ✓ EUR-Lex knowledge: Significant improvement
@@ -580,7 +580,7 @@ Example:
 
 ## License
 
-This project uses LLaMA 3.1 70B which requires Meta's license agreement.
+This project uses LLaMA 3.3 70B which requires Meta's license agreement.
 
 ## Support
 
@@ -591,6 +591,6 @@ For issues, please refer to:
 
 ## Acknowledgments
 
-- Meta AI for LLaMA 3.1
+- Meta AI for LLaMA 3.3
 - NVIDIA for Transformer Engine and DeepSpeed
 - EUR-Lex for legal document corpus

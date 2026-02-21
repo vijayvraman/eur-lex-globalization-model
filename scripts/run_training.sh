@@ -72,7 +72,7 @@ run_cpt_training() {
     echo "Started: $(date)"
     echo ""
     echo "Configuration:"
-    echo "  Model: LLaMA 3.1 70B"
+    echo "  Model: LLaMA 3.3 70B"
     echo "  GPUs: 4x B200"
     echo "  Batch size: 2 per GPU × 4 GPUs × 16 grad_accum = 128"
     echo "  Learning rate: 2e-5"
@@ -126,10 +126,10 @@ run_sft_training() {
     echo ""
 
     # Check if CPT checkpoint exists
-    if [ ! -d "models/llama31-70b-eurlex-cpt-final" ] && [ ! -d "checkpoints/cpt/final" ]; then
+    if [ ! -d "models/llama33-70b-eurlex-cpt-final" ] && [ ! -d "checkpoints/cpt/final" ]; then
         echo "Warning: CPT checkpoint not found"
         echo "Looking in:"
-        echo "  - models/llama31-70b-eurlex-cpt-final"
+        echo "  - models/llama33-70b-eurlex-cpt-final"
         echo "  - checkpoints/cpt/final"
         echo ""
         read -p "Continue with base model? (y/n) " -n 1 -r
@@ -202,5 +202,5 @@ echo ""
 echo "  2. Convert checkpoint for inference:"
 echo "     python src/utils/checkpoint_utils.py convert-fp4 \\"
 echo "       --model_path checkpoints/sft/final \\"
-echo "       --output_path models/llama31-70b-eurlex-sft-final"
+echo "       --output_path models/llama33-70b-eurlex-sft-final"
 echo ""

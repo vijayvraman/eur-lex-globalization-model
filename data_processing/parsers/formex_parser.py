@@ -170,6 +170,16 @@ class FORMEXParser:
 
     def _find_language(self, root: etree._Element) -> str:
         """Extract language code"""
+        # Try LG.DOC element (FORMEX standard)
+        lg_doc = root.find('.//LG.DOC')
+        if lg_doc is not None and lg_doc.text:
+            return lg_doc.text.strip().lower()
+
+        # Try LG.OJ element as fallback
+        lg_oj = root.find('.//LG.OJ')
+        if lg_oj is not None and lg_oj.text:
+            return lg_oj.text.strip().lower()
+
         # Try xml:lang attribute
         lang = root.get('{http://www.w3.org/XML/1998/namespace}lang')
         if lang:
@@ -409,15 +419,33 @@ def main():
     documents = formex_parser.parse_batch(xml_files, max_workers=args.workers)
 
     # Save parsed documents
-    for doc in documents:
+    for idx, doc in enumerate(documents):
         if doc.metadata.celex:
-            filename = f"{doc.metadata.celex}.json"
+            # Sanitize CELEX number for filename
+            celex_clean = re.sub(r'[^\w\-.]', '_', doc.metadata.celex)[:100]
+            filename = f"{celex_clean}.json"
         else:
-            filename = f"document_{hash(doc.full_text)}.json"
+            # Use hash for documents without CELEX
+            filename = f"document_{abs(hash(doc.full_text))}.json"
 
         output_file = output_path / filename
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(doc.to_dict(), f, ensure_ascii=False, indent=2)
+
+        # Handle duplicate filenames
+        counter = 1
+        while output_file.exists():
+            if doc.metadata.celex:
+                celex_clean = re.sub(r'[^\w\-.]', '_', doc.metadata.celex)[:100]
+                filename = f"{celex_clean}_{counter}.json"
+            else:
+                filename = f"document_{abs(hash(doc.full_text))}_{counter}.json"
+            output_file = output_path / filename
+            counter += 1
+
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(doc.to_dict(), f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save document {idx}: {e}")
 
     logger.info(f"Saved {len(documents)} parsed documents to {output_path}")
 

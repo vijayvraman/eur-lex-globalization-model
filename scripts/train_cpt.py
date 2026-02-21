@@ -1,7 +1,7 @@
 """
 CPT Training Script with FP4 Quantization
 
-Trains LLaMA 3.1 70B with:
+Trains LLaMA 3.3 70B with:
 - Continued Pretraining on EUR-Lex legal corpus
 - DeepSpeed ZeRO-3 for distributed training
 - FP4 quantization via Transformer Engine

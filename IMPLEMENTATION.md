@@ -2,7 +2,7 @@
 
 ## ✅ All Components Implemented
 
-This document summarizes the complete implementation of the EUR-Lex Legal Q&A training system with LLaMA 3.1 70B, FP4 quantization, and distributed training on 4x B200 GPUs.
+This document summarizes the complete implementation of the EUR-Lex Legal Q&A training system with LLaMA 3.3 70B, FP4 quantization, and distributed training on 4x B200 GPUs.
 
 ---
 
@@ -42,7 +42,7 @@ This document summarizes the complete implementation of the EUR-Lex Legal Q&A tr
 
 ### Training Infrastructure (4/4)
 6. ✅ **CPT Training Script** (`scripts/train_cpt.py`)
-   - LLaMA 3.1 70B domain adaptation
+   - LLaMA 3.3 70B domain adaptation
    - DeepSpeed ZeRO-3 integration
    - FP4 quantization via Transformer Engine
    - Gradient checkpointing + Flash Attention 2

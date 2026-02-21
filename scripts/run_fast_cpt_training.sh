@@ -205,7 +205,7 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
         echo ""
 
         echo "Training configuration:"
-        echo "  Model: LLaMA 3.1 70B"
+        echo "  Model: LLaMA 3.3 70B"
         echo "  Steps: 12,000 (vs 40,000 full)"
         echo "  Sequence length: 3,072 (vs 4,096 full)"
         echo "  Learning rate: 3e-5 (vs 2e-5 full)"

@@ -1,5 +1,5 @@
 model:
-  name: "meta-llama/Llama-3.1-70B-Instruct"
+  name: "meta-llama/Llama-3.3-70B-Instruct"
   torch_dtype: "bfloat16"
   attn_implementation: "flash_attention_2"
   use_cache: false
@@ -38,6 +38,6 @@ data:
   preprocessing_num_workers: 8
 
 wandb:
-  project: "llama31-70b-eurlex"
+  project: "llama33-70b-eurlex"
   name: "cpt-training"
   entity: null

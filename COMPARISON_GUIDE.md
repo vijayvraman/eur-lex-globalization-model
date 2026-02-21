@@ -1,6 +1,6 @@
 # EUR-Lex Model Comparison Guide
 
-This guide explains how to use the QnA testing system to compare the base LLaMA 3.1 70B model with the fine-tuned EUR-Lex model.
+This guide explains how to use the QnA testing system to compare the base LLaMA 3.3 70B model with the fine-tuned EUR-Lex model.
 
 ## Overview
 
@@ -42,7 +42,7 @@ Compare base and fine-tuned models on the test set:
 
 ```bash
 python scripts/compare_models.py \
-  --base_model meta-llama/Llama-3.1-70B-Instruct \
+  --base_model meta-llama/Llama-3.3-70B-Instruct \
   --finetuned_model ./checkpoints/sft/final \
   --test_dataset data/test/test_qna_100.jsonl \
   --output_dir results/model_comparison \
@@ -51,7 +51,7 @@ python scripts/compare_models.py \
 
 ### Command-line Arguments
 
-- `--base_model`: Path to base model (default: `meta-llama/Llama-3.1-70B-Instruct`)
+- `--base_model`: Path to base model (default: `meta-llama/Llama-3.3-70B-Instruct`)
 - `--finetuned_model`: Path to fine-tuned model (default: `./checkpoints/sft/final`)
 - `--test_dataset`: Path to test JSONL file (required)
 - `--output_dir`: Output directory for results (default: `results/model_comparison`)

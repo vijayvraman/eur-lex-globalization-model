@@ -44,7 +44,7 @@ class SFTDatasetBuilder:
 
 Disclaimer: This is an AI assistant and does not constitute legal advice. Always consult official EUR-Lex sources and legal professionals for authoritative information."""
 
-    def __init__(self, config: SFTConfig, tokenizer_name: str = "meta-llama/Llama-3.1-70B-Instruct"):
+    def __init__(self, config: SFTConfig, tokenizer_name: str = "meta-llama/Llama-3.3-70B-Instruct"):
         """
         Initialize SFT dataset builder
 
@@ -360,7 +360,7 @@ Disclaimer: This is an AI assistant and does not constitute legal advice. Always
         return []
 
     def format_for_llama_chat(self, qa_pair: Dict) -> Dict:
-        """Format Q&A pair for LLaMA 3.1 chat template"""
+        """Format Q&A pair for LLaMA 3.3 chat template"""
         messages = [
             {"role": "system", "content": self.SYSTEM_PROMPT},
             {"role": "user", "content": qa_pair['question']},

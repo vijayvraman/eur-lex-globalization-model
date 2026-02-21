@@ -268,7 +268,7 @@ training:
 ```yaml
 # configs/cpt_config_hybrid_fast.yaml
 model:
-  name: "meta-llama/Llama-3.1-70B-Instruct"
+  name: "meta-llama/Llama-3.3-70B-Instruct"
   torch_dtype: "bfloat16"
   attn_implementation: "flash_attention_2"
 

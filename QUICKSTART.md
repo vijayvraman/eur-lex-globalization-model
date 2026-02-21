@@ -95,7 +95,7 @@ deepspeed --num_gpus=4 scripts/train_cpt.py \
 ```
 
 **Monitor**:
-- W&B dashboard: https://wandb.ai/your-username/llama31-70b-eurlex
+- W&B dashboard: https://wandb.ai/your-username/llama33-70b-eurlex
 - Local logs: `logs/cpt_training/`
 
 **Checkpoints**: Saved every 1000 steps in `checkpoints/cpt/`
@@ -118,7 +118,7 @@ deepspeed --num_gpus=4 scripts/train_sft.py \
 #### Step 6: Evaluate Model
 ```bash
 python scripts/evaluate_model.py \
-  --model_path models/llama31-70b-eurlex-sft-final \
+  --model_path models/llama33-70b-eurlex-sft-final \
   --eval_dataset data/sft/validation/sft_test.jsonl \
   --output_file results/evaluation_report.json
 ```
@@ -213,17 +213,17 @@ ls -lh data/cpt/train/*.parquet | wc -l  # Should be 32
 ls -lht checkpoints/cpt/ | head -5
 
 # Verify model size
-du -sh models/llama31-70b-eurlex-cpt-final
+du -sh models/llama33-70b-eurlex-cpt-final
 ```
 
 ### After SFT Training (GPU Cluster)
 ```bash
 # Check final model
-ls -lh models/llama31-70b-eurlex-sft-final/
+ls -lh models/llama33-70b-eurlex-sft-final/
 
 # Test inference (quick check)
 python scripts/test_inference.py \
-  --model_path models/llama31-70b-eurlex-sft-final \
+  --model_path models/llama33-70b-eurlex-sft-final \
   --prompt "What is GDPR Article 5?"
 ```
 

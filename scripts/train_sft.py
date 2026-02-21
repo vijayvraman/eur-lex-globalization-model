@@ -1,7 +1,7 @@
 """
 SFT Training Script with FP4 Quantization
 
-Trains LLaMA 3.1 70B for instruction-following with:
+Trains LLaMA 3.3 70B for instruction-following with:
 - Supervised Fine-Tuning on EUR-Lex Q&A pairs
 - Input masking (loss only on assistant responses)
 - DeepSpeed ZeRO-3 for distributed training
@@ -71,7 +71,7 @@ def setup_model(config: dict, use_fp8: bool = False):
         tokenizer = AutoTokenizer.from_pretrained(model_path)
     except:
         logger.warning(f"Could not load tokenizer from {model_path}, using base model")
-        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-70B-Instruct")
+        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.3-70B-Instruct")
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

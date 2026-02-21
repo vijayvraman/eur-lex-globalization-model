@@ -48,7 +48,7 @@ class CPTCorpusConfig:
 class CPTCorpusBuilder:
     """Builder for CPT training corpus"""
 
-    def __init__(self, config: CPTCorpusConfig, tokenizer_name: str = "meta-llama/Llama-3.1-70B-Instruct"):
+    def __init__(self, config: CPTCorpusConfig, tokenizer_name: str = "meta-llama/Llama-3.3-70B-Instruct"):
         """
         Initialize CPT corpus builder
 
@@ -379,7 +379,7 @@ def main():
                        help='Maximum sequence length')
     parser.add_argument('--num_shards', type=int, default=32,
                        help='Number of training shards')
-    parser.add_argument('--tokenizer', type=str, default="meta-llama/Llama-3.1-70B-Instruct",
+    parser.add_argument('--tokenizer', type=str, default="meta-llama/Llama-3.3-70B-Instruct",
                        help='Tokenizer to use')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')

@@ -97,7 +97,7 @@ class DataCollatorForSFT:
             labels = input_ids.clone()
 
             # Find where assistant response starts
-            # LLaMA 3.1 chat format: <|start_header_id|>assistant<|end_header_id|>\n\n{response}
+            # LLaMA 3.3 chat format: <|start_header_id|>assistant<|end_header_id|>\n\n{response}
             assistant_start_idx = self._find_assistant_start(input_ids)
 
             # Mask everything before assistant response
@@ -121,7 +121,7 @@ class DataCollatorForSFT:
         """
         Find the index where assistant response starts
 
-        LLaMA 3.1 format:
+        LLaMA 3.3 format:
         <|begin_of_text|><|start_header_id|>system<|end_header_id|>...
         <|start_header_id|>user<|end_header_id|>...
         <|start_header_id|>assistant<|end_header_id|>
@@ -187,7 +187,7 @@ def test_input_masking():
     """Test input masking collator"""
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-70B-Instruct")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.3-70B-Instruct")
 
     # Create sample data
     messages = [

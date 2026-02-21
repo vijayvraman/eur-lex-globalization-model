@@ -1,7 +1,7 @@
 """
 Model Comparison Script for EUR-Lex Q&A
 
-Compares base LLaMA 3.1 70B vs fine-tuned model on test set:
+Compares base LLaMA 3.3 70B vs fine-tuned model on test set:
 - Sequential model loading for memory safety
 - Batch inference on test questions
 - Comprehensive metrics computation
@@ -41,7 +41,7 @@ class ModelComparator:
         Initialize comparator
 
         Args:
-            base_model_path: Path to base model (e.g., meta-llama/Llama-3.1-70B-Instruct)
+            base_model_path: Path to base model (e.g., meta-llama/Llama-3.3-70B-Instruct)
             finetuned_model_path: Path to fine-tuned model (e.g., ./checkpoints/sft/final)
             device: Device to use (cuda/cpu)
         """
@@ -442,7 +442,7 @@ class ModelComparator:
 
 def main():
     parser = argparse.ArgumentParser(description='Compare EUR-Lex Models')
-    parser.add_argument('--base_model', type=str, default='meta-llama/Llama-3.1-70B-Instruct',
+    parser.add_argument('--base_model', type=str, default='meta-llama/Llama-3.3-70B-Instruct',
                        help='Base model path')
     parser.add_argument('--finetuned_model', type=str, default='./checkpoints/sft/final',
                        help='Fine-tuned model path')
