@@ -1,0 +1,14 @@
+{
+  "train": {
+    "num_sequences": 16663,
+    "total_tokens": 178588076,
+    "avg_length": 10717.642441337093,
+    "total_documents": 75004
+  },
+  "validation": {
+    "num_sequences": 925,
+    "total_tokens": 6519849,
+    "avg_length": 7048.485405405406,
+    "total_documents": 3948
+  }
+}
