@@ -26,6 +26,8 @@ FILTERED_DIR="$BASE_DIR/data/cpt_filtered"
 TARGET_TOKENS=2000000000  # 2B tokens (40% of full corpus)
 QUALITY_THRESHOLD=70      # Minimum quality score
 NUM_SHARDS=16             # Fewer shards for smaller corpus
+USE_FSDP=${USE_FSDP:-"true"}  # Default to FSDP2 (NVIDIA Blackwell optimized), set to "false" for DeepSpeed
+PRECISION=${PRECISION:-"fp8"}  # Precision mode: "fp8" (default) or "nvfp4" (experimental)
 
 # Parse command line arguments
 SKIP_FILTERING=${1:-"false"}
@@ -204,6 +206,22 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
         nvidia-smi --query-gpu=name,memory.total --format=csv
         echo ""
 
+        # Display backend and precision
+        if [ "$USE_FSDP" == "true" ]; then
+            echo "Backend: PyTorch FSDP2 + Transformer Engine (NVIDIA Blackwell optimized)"
+        else
+            echo "Backend: DeepSpeed ZeRO-3 + Transformer Engine"
+        fi
+
+        if [ "$PRECISION" == "nvfp4" ]; then
+            echo "Precision: NVFP4 (4-bit E2M1) - Experimental"
+            echo "  → Expected memory: ~35GB per GPU"
+            echo "  → 50% memory savings vs FP8"
+        else
+            echo "Precision: FP8 (8-bit E4M3/E5M2) - Default"
+            echo "  → Expected memory: ~70GB per GPU"
+        fi
+
         echo "Training configuration:"
         echo "  Model: LLaMA 3.3 70B"
         echo "  Steps: 12,000 (vs 40,000 full)"
@@ -221,21 +239,36 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
             exit 0
         fi
 
-        # Set environment variables for FP4
+        # Set environment variables for FP4 quantization
         export NVTE_FP8_DPA_BWD=1
         export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
 
-        echo "Environment variables set for FP4 training"
+        echo "Environment variables set for FP4 quantization"
         echo ""
 
         START_TIME=$(date +%s)
 
-        deepspeed --num_gpus=4 \
-            --master_port=29500 \
-            scripts/train_cpt.py \
-            --config configs/cpt_config_fast.yaml \
-            --deepspeed configs/ds_config_zero3.json \
-            --use_fp8
+        if [ "$USE_FSDP" == "true" ]; then
+            # FSDP2 launcher (torchrun)
+            torchrun \
+                --nproc_per_node=4 \
+                --master_port=29500 \
+                scripts/train_cpt.py \
+                --config configs/cpt_config_fast.yaml \
+                --fsdp \
+                --fsdp_config fast_cpt \
+                --use_fp8 \
+                --precision "$PRECISION"
+        else
+            # DeepSpeed launcher (original)
+            deepspeed --num_gpus=4 \
+                --master_port=29500 \
+                scripts/train_cpt.py \
+                --config configs/cpt_config_fast.yaml \
+                --deepspeed configs/ds_config_zero3.json \
+                --use_fp8 \
+                --precision "$PRECISION"
+        fi
 
         END_TIME=$(date +%s)
         DURATION=$((END_TIME - START_TIME))
@@ -261,6 +294,21 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
         echo "     python scripts/compare_checkpoints.py \\"
         echo "       --fast checkpoints/cpt_fast/final \\"
         echo "       --full checkpoints/cpt/final"
+        echo ""
+        echo "================================================================================"
+        echo "Usage:"
+        echo "  Default (FSDP2 + FP8):"
+        echo "    ./scripts/run_fast_cpt_training.sh"
+        echo ""
+        echo "  Use NVFP4 (4-bit, experimental, 50% memory savings):"
+        echo "    PRECISION=nvfp4 ./scripts/run_fast_cpt_training.sh"
+        echo ""
+        echo "  With DeepSpeed ZeRO-3 (legacy):"
+        echo "    USE_FSDP=false ./scripts/run_fast_cpt_training.sh"
+        echo ""
+        echo "  Combine options:"
+        echo "    PRECISION=nvfp4 USE_FSDP=true ./scripts/run_fast_cpt_training.sh"
+        echo "================================================================================"
         echo ""
     fi
 else

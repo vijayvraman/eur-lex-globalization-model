@@ -12,6 +12,8 @@ echo ""
 
 # Configuration
 PHASE=${1:-"both"}  # cpt, sft, or both
+USE_FSDP=${USE_FSDP:-"true"}  # Default to FSDP2 (NVIDIA Blackwell optimized), set to "false" for DeepSpeed
+PRECISION=${PRECISION:-"fp8"}  # Precision mode: "fp8" (default) or "nvfp4" (experimental)
 BASE_DIR="$(pwd)"
 
 # Verify GPU availability
@@ -38,11 +40,11 @@ echo ""
 nvidia-smi --query-gpu=name,memory.total --format=csv
 echo ""
 
-# Set environment variables for Transformer Engine FP4
+# Set environment variables for Transformer Engine FP4 quantization
 export NVTE_FP8_DPA_BWD=1
 export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
 
-echo "Environment variables set for FP4 training:"
+echo "Environment variables set for FP4 quantization:"
 echo "  NVTE_FP8_DPA_BWD=$NVTE_FP8_DPA_BWD"
 echo "  NVTE_ALLOW_NONDETERMINISTIC_ALGO=$NVTE_ALLOW_NONDETERMINISTIC_ALGO"
 echo ""
@@ -71,13 +73,29 @@ run_cpt_training() {
     echo "=========================================="
     echo "Started: $(date)"
     echo ""
+
+    # Display backend and precision
+    if [ "$USE_FSDP" == "true" ]; then
+        echo "Backend: PyTorch FSDP2 + Transformer Engine (NVIDIA Blackwell optimized)"
+    else
+        echo "Backend: DeepSpeed ZeRO-3 + Transformer Engine"
+    fi
+
+    if [ "$PRECISION" == "nvfp4" ]; then
+        echo "Precision: NVFP4 (4-bit E2M1) - Experimental"
+        echo "  → Expected memory: ~35GB per GPU"
+        echo "  → 50% memory savings vs FP8"
+    else
+        echo "Precision: FP8 (8-bit E4M3/E5M2) - Default"
+        echo "  → Expected memory: ~70GB per GPU"
+    fi
+
     echo "Configuration:"
     echo "  Model: LLaMA 3.3 70B"
     echo "  GPUs: 4x B200"
     echo "  Batch size: 2 per GPU × 4 GPUs × 16 grad_accum = 128"
     echo "  Learning rate: 2e-5"
     echo "  Steps: 40,000"
-    echo "  Precision: FP4 (weights) + BF16 (gradients)"
     echo "  Estimated time: 20-24 hours"
     echo ""
     read -p "Start CPT training? (y/n) " -n 1 -r
@@ -88,12 +106,27 @@ run_cpt_training() {
 
     START_TIME=$(date +%s)
 
-    deepspeed --num_gpus=4 \
-        --master_port=29500 \
-        scripts/train_cpt.py \
-        --config configs/cpt_config.yaml \
-        --deepspeed configs/ds_config_zero3.json \
-        --use_fp8
+    if [ "$USE_FSDP" == "true" ]; then
+        # FSDP2 launcher (torchrun)
+        torchrun \
+            --nproc_per_node=4 \
+            --master_port=29500 \
+            scripts/train_cpt.py \
+            --config configs/cpt_config.yaml \
+            --fsdp \
+            --fsdp_config cpt \
+            --use_fp8 \
+            --precision "$PRECISION"
+    else
+        # DeepSpeed launcher (original)
+        deepspeed --num_gpus=4 \
+            --master_port=29500 \
+            scripts/train_cpt.py \
+            --config configs/cpt_config.yaml \
+            --deepspeed configs/ds_config_zero3.json \
+            --use_fp8 \
+            --precision "$PRECISION"
+    fi
 
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
@@ -114,13 +147,29 @@ run_sft_training() {
     echo "=========================================="
     echo "Started: $(date)"
     echo ""
+
+    # Display backend and precision
+    if [ "$USE_FSDP" == "true" ]; then
+        echo "Backend: PyTorch FSDP2 + Transformer Engine (NVIDIA Blackwell optimized)"
+    else
+        echo "Backend: DeepSpeed ZeRO-3 + Transformer Engine"
+    fi
+
+    if [ "$PRECISION" == "nvfp4" ]; then
+        echo "Precision: NVFP4 (4-bit E2M1) - Experimental"
+        echo "  → Expected memory: ~20GB per GPU"
+        echo "  → 50% memory savings vs FP8"
+    else
+        echo "Precision: FP8 (8-bit E4M3/E5M2) - Default"
+        echo "  → Expected memory: ~40GB per GPU"
+    fi
+
     echo "Configuration:"
     echo "  Model: CPT checkpoint"
     echo "  GPUs: 4x B200"
     echo "  Batch size: 4 per GPU × 4 GPUs × 8 grad_accum = 128"
     echo "  Learning rate: 5e-6"
     echo "  Epochs: 3"
-    echo "  Precision: FP4 (weights) + BF16 (gradients)"
     echo "  Input masking: Enabled"
     echo "  Estimated time: 6-8 hours"
     echo ""
@@ -147,12 +196,27 @@ run_sft_training() {
 
     START_TIME=$(date +%s)
 
-    deepspeed --num_gpus=4 \
-        --master_port=29500 \
-        scripts/train_sft.py \
-        --config configs/sft_config.yaml \
-        --deepspeed configs/ds_config_zero3_sft.json \
-        --use_fp8
+    if [ "$USE_FSDP" == "true" ]; then
+        # FSDP2 launcher (torchrun)
+        torchrun \
+            --nproc_per_node=4 \
+            --master_port=29500 \
+            scripts/train_sft.py \
+            --config configs/sft_config.yaml \
+            --fsdp \
+            --fsdp_config sft \
+            --use_fp8 \
+            --precision "$PRECISION"
+    else
+        # DeepSpeed launcher (original)
+        deepspeed --num_gpus=4 \
+            --master_port=29500 \
+            scripts/train_sft.py \
+            --config configs/sft_config.yaml \
+            --deepspeed configs/ds_config_zero3_sft.json \
+            --use_fp8 \
+            --precision "$PRECISION"
+    fi
 
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
@@ -203,4 +267,24 @@ echo "  2. Convert checkpoint for inference:"
 echo "     python src/utils/checkpoint_utils.py convert-fp4 \\"
 echo "       --model_path checkpoints/sft/final \\"
 echo "       --output_path models/llama33-70b-eurlex-sft-final"
+echo ""
+echo "================================================================================"
+echo "Usage Examples:"
+echo "================================================================================"
+echo ""
+echo "Default (FSDP2 + FP8):"
+echo "  ./scripts/run_training.sh both"
+echo ""
+echo "Run only CPT or SFT:"
+echo "  ./scripts/run_training.sh cpt"
+echo "  ./scripts/run_training.sh sft"
+echo ""
+echo "Use NVFP4 (4-bit, experimental, 50% memory savings):"
+echo "  PRECISION=nvfp4 ./scripts/run_training.sh both"
+echo ""
+echo "Use DeepSpeed ZeRO-3 (legacy):"
+echo "  USE_FSDP=false ./scripts/run_training.sh both"
+echo ""
+echo "Combine options:"
+echo "  PRECISION=nvfp4 USE_FSDP=true ./scripts/run_training.sh cpt"
 echo ""

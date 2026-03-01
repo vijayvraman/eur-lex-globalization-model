@@ -23,15 +23,31 @@ training:
   metric_for_best_model: "eval_loss"
 
   bf16: true
-  fp8: true
+  quantization: true  # Enable quantization via Transformer Engine
   gradient_checkpointing: true
-  deepspeed: "configs/ds_config_zero3_sft.json"
+
+  # Precision mode (Blackwell B200 GPUs)
+  # fp8: 8-bit FP8 (E4M3/E5M2) - Default, stable, ~70GB for 70B model
+  # nvfp4: 4-bit NVFP4 (E2M1) - Experimental, ~35GB for 70B model
+  precision: "fp8"  # Default: fp8 (recommended)
+
+  # Distributed training configuration
+  # FSDP2 is the default (NVIDIA's recommended stack for Blackwell B200 GPUs)
+  # Use --fsdp flag in training script (default) for FSDP2
+  # Use --deepspeed flag for DeepSpeed ZeRO-3 (legacy compatibility)
+  use_fsdp: true  # Default to FSDP2 (NVIDIA Blackwell optimized)
+  fsdp_sharding_strategy: "full_shard"  # FULL_SHARD = ZeRO-3 equivalent
+  deepspeed: "configs/ds_config_zero3_sft.json"  # Used only when --deepspeed flag is set
+
   report_to: "wandb"
 
 transformer_engine:
   enabled: true
-  fp8_format: "hybrid"
-  fp8_amax_history_len: 1024
+  # FP8 settings (default precision mode)
+  fp8_format: "hybrid"  # Hybrid: E4M3 for forward, E5M2 for backward
+  fp8_amax_history_len: 1024  # AMAX history length for dynamic scaling
+  # NVFP4 settings (experimental, use --precision nvfp4 to enable)
+  nvfp4_block_size: 16  # Block size for NVFP4 scaling (16 or 32)
 
 data:
   train_file: "data/sft/train/sft_train_shard_*.jsonl"

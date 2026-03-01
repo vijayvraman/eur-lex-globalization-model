@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logging.basicConfig(level=logging.INFO)
@@ -231,6 +232,264 @@ def get_checkpoint_info(checkpoint_path: str) -> dict:
     return info
 
 
+# ============================================================================
+# FSDP Checkpoint Utilities
+# ============================================================================
+
+def save_fsdp_checkpoint(
+    model,
+    output_dir: str,
+    save_as_full_state_dict: bool = True
+):
+    """
+    Save FSDP checkpoint
+
+    Args:
+        model: FSDP-wrapped model
+        output_dir: Output directory
+        save_as_full_state_dict: If True, consolidate to single file (HuggingFace compatible)
+                                 If False, save as sharded (faster but FSDP-specific)
+    """
+    from torch.distributed.fsdp import (
+        FullyShardedDataParallel as FSDP,
+        StateDictType,
+        FullStateDictConfig,
+    )
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Saving FSDP checkpoint to {output_dir}")
+    logger.info(f"Full state dict: {save_as_full_state_dict}")
+
+    if save_as_full_state_dict:
+        # Consolidate to full state dict (portable, HuggingFace compatible)
+        logger.info("Consolidating to full state dict (this may take a few minutes)...")
+
+        save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            state_dict_config=save_policy,
+        ):
+            state_dict = model.state_dict()
+
+            # Only rank 0 saves
+            if not dist.is_initialized() or dist.get_rank() == 0:
+                checkpoint_path = output_path / "pytorch_model.bin"
+                torch.save(state_dict, checkpoint_path)
+                logger.info(f"Saved full state dict: {checkpoint_path}")
+                logger.info(f"Size: {checkpoint_path.stat().st_size / (1024**3):.2f} GB")
+    else:
+        # Save sharded checkpoint (faster, FSDP-specific)
+        from torch.distributed.fsdp import ShardedStateDictConfig
+
+        logger.info("Saving sharded checkpoint...")
+
+        save_policy = ShardedStateDictConfig(offload_to_cpu=True)
+
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.SHARDED_STATE_DICT,
+            state_dict_config=save_policy,
+        ):
+            state_dict = model.state_dict()
+
+            if dist.is_initialized():
+                rank = dist.get_rank()
+            else:
+                rank = 0
+
+            shard_path = output_path / f"pytorch_model_fsdp_shard_{rank}.bin"
+            torch.save(state_dict, shard_path)
+            logger.info(f"Saved sharded checkpoint (rank {rank}): {shard_path}")
+
+    logger.info("FSDP checkpoint saved successfully")
+
+
+def load_fsdp_checkpoint(
+    model,
+    checkpoint_dir: str,
+    is_sharded: bool = False
+):
+    """
+    Load FSDP checkpoint
+
+    Args:
+        model: FSDP-wrapped model
+        checkpoint_dir: Checkpoint directory
+        is_sharded: If True, load from sharded checkpoint
+    """
+    from torch.distributed.fsdp import (
+        FullyShardedDataParallel as FSDP,
+        StateDictType,
+        FullStateDictConfig,
+    )
+
+    checkpoint_path = Path(checkpoint_dir)
+
+    logger.info(f"Loading FSDP checkpoint from {checkpoint_dir}")
+    logger.info(f"Sharded: {is_sharded}")
+
+    if is_sharded:
+        # Load from sharded checkpoint
+        from torch.distributed.fsdp import ShardedStateDictConfig
+
+        if dist.is_initialized():
+            rank = dist.get_rank()
+        else:
+            rank = 0
+
+        shard_path = checkpoint_path / f"pytorch_model_fsdp_shard_{rank}.bin"
+
+        if not shard_path.exists():
+            raise FileNotFoundError(f"Sharded checkpoint not found: {shard_path}")
+
+        load_policy = ShardedStateDictConfig(offload_to_cpu=True)
+
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.SHARDED_STATE_DICT,
+            state_dict_config=load_policy,
+        ):
+            state_dict = torch.load(shard_path, map_location='cpu')
+            model.load_state_dict(state_dict)
+
+        logger.info(f"Loaded sharded checkpoint from rank {rank}")
+    else:
+        # Load from full state dict
+        full_path = checkpoint_path / "pytorch_model.bin"
+
+        if not full_path.exists():
+            raise FileNotFoundError(f"Full state dict not found: {full_path}")
+
+        load_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            state_dict_config=load_policy,
+        ):
+            if not dist.is_initialized() or dist.get_rank() == 0:
+                state_dict = torch.load(full_path, map_location='cpu')
+            else:
+                state_dict = None
+
+            model.load_state_dict(state_dict)
+
+        logger.info("Loaded full state dict checkpoint")
+
+    logger.info("FSDP checkpoint loaded successfully")
+
+
+def convert_deepspeed_to_fsdp(
+    deepspeed_checkpoint_dir: str,
+    output_dir: str,
+    model_config: str = "meta-llama/Llama-3.3-70B-Instruct",
+    zero_stage: int = 3
+):
+    """
+    Convert DeepSpeed ZeRO-3 checkpoint to FSDP-compatible format
+
+    Strategy:
+    1. Use DeepSpeed's zero_to_fp32 to consolidate shards
+    2. Load into HuggingFace model
+    3. Save as HuggingFace checkpoint (FSDP can load this directly)
+
+    Args:
+        deepspeed_checkpoint_dir: DeepSpeed checkpoint path
+        output_dir: FSDP-compatible output path
+        model_config: HuggingFace model identifier for architecture
+        zero_stage: DeepSpeed ZeRO stage (3 for ZeRO-3)
+    """
+    logger.info("=" * 80)
+    logger.info("Converting DeepSpeed checkpoint to FSDP format")
+    logger.info("=" * 80)
+    logger.info(f"Input: {deepspeed_checkpoint_dir}")
+    logger.info(f"Output: {output_dir}")
+    logger.info(f"ZeRO stage: {zero_stage}")
+    logger.info(f"Model config: {model_config}")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    if zero_stage == 3:
+        # For ZeRO-3, need to consolidate shards first
+        try:
+            from deepspeed.utils.zero_to_fp32 import convert_zero_checkpoint_to_fp32_state_dict
+
+            logger.info("Step 1: Consolidating DeepSpeed ZeRO-3 shards...")
+            temp_path = output_path / "temp_consolidated.bin"
+
+            # Consolidate shards to temporary file
+            state_dict = convert_zero_checkpoint_to_fp32_state_dict(
+                deepspeed_checkpoint_dir,
+                str(temp_path)
+            )
+
+            logger.info("Step 2: Loading into HuggingFace model...")
+
+            # Load into HuggingFace model
+            model = AutoModelForCausalLM.from_pretrained(
+                model_config,
+                state_dict=state_dict if state_dict else torch.load(temp_path),
+                torch_dtype=torch.bfloat16,
+            )
+
+            logger.info("Step 3: Saving as HuggingFace checkpoint (FSDP-compatible)...")
+
+            # Save as HuggingFace checkpoint (FSDP can load this)
+            model.save_pretrained(output_dir, max_shard_size="5GB")
+
+            # Copy tokenizer
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(deepspeed_checkpoint_dir)
+            except:
+                logger.warning("Tokenizer not found in DeepSpeed checkpoint, using base model tokenizer")
+                tokenizer = AutoTokenizer.from_pretrained(model_config)
+
+            tokenizer.save_pretrained(output_dir)
+
+            # Cleanup temporary file
+            if temp_path.exists():
+                temp_path.unlink()
+                logger.info("Cleaned up temporary files")
+
+            logger.info("=" * 80)
+            logger.info("✓ Conversion complete!")
+            logger.info("=" * 80)
+            logger.info(f"FSDP-compatible checkpoint saved to: {output_dir}")
+            logger.info("This checkpoint can now be loaded by FSDP training scripts")
+
+        except ImportError:
+            logger.error("DeepSpeed not available. Cannot convert ZeRO-3 checkpoint.")
+            logger.error("Please install DeepSpeed: pip install deepspeed")
+            raise
+        except Exception as e:
+            logger.error(f"Error during conversion: {e}")
+            raise
+    else:
+        # For ZeRO-1/2, can convert directly
+        logger.info(f"Converting ZeRO-{zero_stage} checkpoint (no consolidation needed)...")
+
+        model = AutoModelForCausalLM.from_pretrained(
+            deepspeed_checkpoint_dir,
+            torch_dtype=torch.bfloat16,
+        )
+
+        model.save_pretrained(output_dir, max_shard_size="5GB")
+
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(deepspeed_checkpoint_dir)
+        except:
+            tokenizer = AutoTokenizer.from_pretrained(model_config)
+
+        tokenizer.save_pretrained(output_dir)
+
+        logger.info("Conversion complete!")
+
+
 def main():
     """Command-line interface for checkpoint utilities"""
     import argparse
@@ -257,6 +516,18 @@ def main():
     info_parser = subparsers.add_parser('info', help='Get checkpoint info')
     info_parser.add_argument('--checkpoint_path', required=True, help='Checkpoint path')
 
+    # Convert DeepSpeed to FSDP
+    ds_to_fsdp_parser = subparsers.add_parser('convert-ds-to-fsdp',
+                                               help='Convert DeepSpeed checkpoint to FSDP format')
+    ds_to_fsdp_parser.add_argument('--checkpoint_dir', required=True,
+                                    help='DeepSpeed checkpoint directory')
+    ds_to_fsdp_parser.add_argument('--output_dir', required=True,
+                                    help='Output directory for FSDP-compatible checkpoint')
+    ds_to_fsdp_parser.add_argument('--model_config', default='meta-llama/Llama-3.3-70B-Instruct',
+                                    help='HuggingFace model identifier for architecture')
+    ds_to_fsdp_parser.add_argument('--zero_stage', type=int, default=3,
+                                    help='DeepSpeed ZeRO stage (3 for ZeRO-3)')
+
     args = parser.parse_args()
 
     if args.command == 'convert-ds':
@@ -269,6 +540,13 @@ def main():
         info = get_checkpoint_info(args.checkpoint_path)
         import json
         print(json.dumps(info, indent=2))
+    elif args.command == 'convert-ds-to-fsdp':
+        convert_deepspeed_to_fsdp(
+            args.checkpoint_dir,
+            args.output_dir,
+            args.model_config,
+            args.zero_stage
+        )
     else:
         parser.print_help()
 
