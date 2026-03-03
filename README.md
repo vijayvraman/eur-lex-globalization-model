@@ -12,14 +12,47 @@ Train LLaMA 3.3 70B on 25GB FORMEX XML data (EN/FR/DE/ES/PT) for legal Q&A with 
 - **Distributed**: PyTorch FSDP2 (NVIDIA's recommended stack for Blackwell)
 - **Timeline**: ~1 day total (with optimized training and balanced epochs)
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Precision Modes](#precision-modes)
+- [Dataset Status](#dataset-status)
+- [Installation](#installation)
+- [Project Structure](#project-structure)
+- [Module Reference](#module-reference)
+- [Scripts Reference](#scripts-reference)
+- [Usage](#usage)
+  - [Phase 1: Data Processing (Mac Studio)](#phase-1-data-processing-mac-studio)
+  - [Phase 2: CPT Training (4x B200 GPUs)](#phase-2-cpt-training-4x-b200-gpus)
+  - [Phase 3: SFT Training (4x B200 GPUs)](#phase-3-sft-training-4x-b200-gpus)
+  - [Phase 4: Evaluation](#phase-4-evaluation)
+- [Model Comparison & QnA Testing](#model-comparison--qna-testing)
+- [Preventing Catastrophic Forgetting](#preventing-catastrophic-forgetting)
+- [Configuration](#configuration)
+- [Memory Optimization](#memory-optimization)
+- [Success Metrics & Expected Results](#success-metrics--expected-results)
+- [Monitoring](#monitoring)
+- [Citation Format](#citation-format)
+- [Troubleshooting](#troubleshooting)
+- [Testing & Verification](#testing--verification)
+- [License](#license)
+- [Support](#support)
+- [Acknowledgments](#acknowledgments)
+
 ## Key Features
 
 ✅ **FP8/NVFP4 Quantization**: 50% memory reduction (FP8) or 75% (NVFP4), similar throughput
+
 ✅ **Multilingual**: EN (35%), FR (25%), DE (20%), ES (12%), PT (8%)
+
 ✅ **Citation-Aware**: Automatic CELEX reference extraction and validation
+
 ✅ **FSDP2 + Transformer Engine**: NVIDIA's recommended stack for Blackwell B200 GPUs
-✅ **Document Packing**: Efficient 4096-token sequence packing
+
 ✅ **Balanced Training**: 5 epochs to prevent catastrophic forgetting
+
+✅ **Document Packing**: Efficient 4096-token sequence packing
 
 ## Precision Modes
 
@@ -194,6 +227,157 @@ eur-lex-globalization-model/
 └── requirements.txt             # Dependencies
 ```
 
+## Module Reference
+
+### Core Source Modules (`/src/`)
+
+#### Training Modules (`/src/training/`)
+
+**`fsdp_config.py`**
+- Configures PyTorch FSDP2 (Fully Sharded Data Parallel) for distributed training
+- Sets up mixed precision policies (BF16 for parameters, FP16/FP8 for computation)
+- Handles both FP8 and NVFP4 quantization modes via Transformer Engine
+- Auto-wrap policy for LlamaDecoderLayer modules
+- Configures sharding strategy (FULL_SHARD = ZeRO-3 equivalent)
+- Activation checkpointing and backward prefetch optimization
+
+**`data_collators.py`**
+- `DataCollatorForCPT`: Standard language modeling collator for continued pretraining
+  - Pads sequences to max length with left padding
+  - Creates attention masks and labels for causal LM
+- `DataCollatorForSFT`: Input masking collator for supervised fine-tuning
+  - Masks instruction tokens (loss only computed on assistant responses)
+  - Handles multi-turn conversations with proper masking
+  - Preserves answer tokens for gradient computation
+
+#### Evaluation Modules (`/src/evaluation/`)
+
+**`metrics.py`**
+- `LegalQAMetrics`: Comprehensive metrics for legal Q&A evaluation
+  - **Citation Accuracy**: Extracts and validates CELEX numbers (e.g., `32016R0679`)
+  - **Article Accuracy**: Validates article references (e.g., `Article 5`)
+  - **ROUGE-L**: Measures answer quality and similarity to reference
+  - **Exact Match**: Binary metric for perfect answer matching
+  - **Hallucination Detection**: Identifies incorrect or fabricated citations
+- Uses regex patterns for CELEX (`\d{4}[A-Z]\d{4}`) and article (`Article\s+\d+`) extraction
+- Per-language metric tracking (EN, FR, DE, ES, PT)
+
+**`report_generator.py`**
+- Generates human-readable evaluation reports in Markdown format
+- Creates comparison tables with delta calculations
+- Produces win/loss/tie statistics for model comparisons
+- Exports detailed prediction-level results to CSV
+
+#### Utility Modules (`/src/utils/`)
+
+**`fp8_utils.py`**
+- FP8 and NVFP4 quantization utilities via NVIDIA Transformer Engine
+- **FP8 Support**:
+  - E4M3 format for forward pass (1 sign + 4 exp + 3 mantissa)
+  - E5M2 format for backward pass (1 sign + 5 exp + 2 mantissa)
+  - Dynamic per-tensor scaling with AMAX tracking
+- **NVFP4 Support**:
+  - E2M1 format with block scaling (1 sign + 2 exp + 1 mantissa)
+  - 16-element blocks for activations/gradients
+  - 16×16 blocks for weights
+- Scaling factor management and numerical stability utilities
+
+**`checkpoint_utils.py`**
+- Checkpoint saving and loading for distributed training
+- Model conversion utilities:
+  - DeepSpeed checkpoint → FSDP checkpoint
+  - FSDP checkpoint → DeepSpeed checkpoint
+  - Handles state dict resharding and parameter redistribution
+- Resume training from partial checkpoints
+- Checkpoint consolidation for multi-GPU training
+
+### Data Processing Modules (`/data_processing/`)
+
+#### Parsers (`/data_processing/parsers/`)
+
+**`formex_parser.py`**
+- Parses FORMEX XML documents from EUR-Lex corpus
+- **Data Structures**:
+  - `DocumentMetadata`: CELEX number, language, document type, publication date, title
+  - `Article`: Article ID, title, text content, paragraph list
+  - `ParsedDocument`: Complete document with metadata, articles, and full text
+- Extracts structured legal content from XML
+- Handles multilingual documents (EN, FR, DE, ES, PT)
+- Validates and normalizes CELEX references
+
+#### Dataset Builders (`/data_processing/dataset_builders/`)
+
+**`cpt_corpus_builder.py`**
+- Builds Continued Pretraining corpus from parsed documents
+- **Features**:
+  - Document packing into 4096-token sequences for efficient training
+  - Language distribution: EN 35%, FR 25%, DE 20%, ES 12%, PT 8%
+  - Creates 32 training shards for distributed data loading
+  - 95/5 train/validation split
+  - Generates corpus statistics (token counts, sequence lengths, document counts)
+- **Output**: Parquet files with columns `input_ids`, `attention_mask`, `labels`
+- Tokenizes using LLaMA tokenizer with proper padding and truncation
+
+**`sft_dataset_builder.py`**
+- Builds Supervised Fine-Tuning dataset from Q&A pairs
+- **Features**:
+  - Converts documents into instruction-following Q&A format
+  - Includes CELEX citations and article references in answers
+  - Creates 8 training shards for efficient loading
+  - Validates citation correctness (>95% accuracy)
+  - Ensures multilingual balance across all languages
+- **Output**: JSONL files with `question`, `answer`, `language`, `metadata` fields
+- Supports conversation format with system/user/assistant roles
+
+#### Validators (`/data_processing/validators/`)
+
+**Data quality validation modules**:
+- Citation validator: Verifies CELEX format and existence
+- Language detector: Confirms document language matches metadata
+- Completeness checker: Ensures all required fields are present
+- Duplicate detector: Identifies and removes duplicate documents
+
+## Scripts Reference
+
+### Training & Orchestration Scripts
+
+| Script | Purpose | Key Features |
+|--------|---------|--------------|
+| **`scripts/train_cpt.py`** | Continued Pretraining script | - Trains LLaMA 3.3 70B on EUR-Lex corpus<br>- Supports FSDP2 and DeepSpeed backends<br>- FP8/NVFP4 quantization support<br>- 4,260 steps (5 epochs) for balanced learning<br>- Distributed training across 4x B200 GPUs |
+| **`scripts/train_sft.py`** | Supervised Fine-Tuning script | - Instruction fine-tuning on Q&A pairs<br>- Input masking (loss only on responses)<br>- 3 epochs with early stopping<br>- Same distributed training support as CPT |
+| **`scripts/run_training.sh`** | Main training orchestrator | - Launches CPT, SFT, or both phases<br>- Auto-detects FSDP vs DeepSpeed mode<br>- Supports FP8/NVFP4 via `PRECISION` env var<br>- Manages checkpointing and logging<br>- Usage: `./scripts/run_training.sh [cpt|sft|both]` |
+| **`scripts/run_fast_cpt_training.sh`** | Fast CPT training (2 epochs) | - 45-60 minute training time<br>- 2 epochs through 446M tokens<br>- 3072-token sequences (vs 4096)<br>- ~$35 cost (vs $85 for full CPT)<br>- Ideal for rapid prototyping |
+| **`scripts/run_full_pipeline.sh`** | Full end-to-end pipeline (legacy) | - Runs data processing + training + evaluation<br>- Maintained for backward compatibility<br>- Useful for batch processing |
+
+### Data Processing Scripts
+
+| Script | Purpose | Key Features |
+|--------|---------|--------------|
+| **`scripts/generate_sample_data.py`** | Generates sample EUR-Lex documents | - Creates synthetic FORMEX XML for testing<br>- Useful for pipeline validation without full corpus<br>- Generates 100+ sample documents across 5 languages |
+| **`scripts/generate_test_set.py`** | Creates test Q&A pairs | - Generates 100+ Q&A pairs with citations<br>- 20 questions per language (EN, FR, DE, ES, PT)<br>- Includes definition, compliance, requirement questions<br>- Ground truth answers with proper CELEX citations<br>- Output: `data/test/test_qna_100.jsonl` |
+| **`scripts/create_fast_cpt_corpus.py`** | Builds CPT corpus for fast training | - Creates smaller corpus for rapid iteration<br>- 3072-token sequences (vs 4096)<br>- Fewer shards for faster loading<br>- Same format as standard CPT corpus |
+
+### Evaluation Scripts
+
+| Script | Purpose | Key Features |
+|--------|---------|--------------|
+| **`scripts/evaluate_model.py`** | Evaluates trained model | - Computes citation accuracy, ROUGE-L, exact match<br>- Per-language performance breakdown<br>- Hallucination detection<br>- Generates evaluation report (JSON + Markdown)<br>- Usage: `python scripts/evaluate_model.py --model_path <path> --eval_dataset <path>` |
+| **`scripts/compare_models.py`** | Compares base vs fine-tuned models | - Runs both models on same test questions<br>- Detailed metric comparison with deltas<br>- Win/loss/tie analysis<br>- Exports predictions to CSV for error analysis<br>- Sequential model loading for memory safety<br>- Usage: `python scripts/compare_models.py --base_model <path> --finetuned_model <path> --test_dataset <path>` |
+
+### Setup Scripts
+
+| Script | Purpose | Key Features |
+|--------|---------|--------------|
+| **`setup.sh`** | Auto-detection setup | - Detects Mac vs Linux environment<br>- Calls appropriate setup script<br>- Recommended for first-time setup |
+| **`setup_mac.sh`** | Mac Studio setup | - PyTorch with CPU/MPS support<br>- Data processing libraries (lxml, pandas, datasets)<br>- No CUDA dependencies (macOS incompatible) |
+| **`setup_gpu.sh`** | GPU cluster setup | - PyTorch with CUDA 12.8+ support<br>- NVIDIA Transformer Engine (FP8/NVFP4)<br>- Flash Attention 2<br>- All training dependencies |
+
+### Testing & Validation Scripts
+
+| Script | Purpose | Key Features |
+|--------|---------|--------------|
+| **`scripts/test_pipeline_sample.sh`** | Quick pipeline test | - Tests full pipeline on sample data<br>- Validates data processing → training → evaluation<br>- ~10 minute runtime<br>- Useful for CI/CD and development |
+
 ## Usage
 
 ### Phase 1: Data Processing (Mac Studio)
@@ -209,6 +393,35 @@ python data_processing/parsers/formex_parser.py \
   --workers 24
 ```
 
+**What This Does**:
+- Parses 25GB of FORMEX XML documents from EUR-Lex corpus
+- Extracts structured content into `ParsedDocument` objects:
+  ```python
+  ParsedDocument:
+    metadata:
+      celex: "32016R0679"           # CELEX number
+      language: "en"                 # Document language
+      doc_type: "regulation"         # regulation, directive, decision, etc.
+      date: "2016-04-27"            # Publication date
+      title: "General Data Protection Regulation"
+    articles: [
+      Article:
+        id: "5"
+        title: "Principles relating to processing"
+        text: "Personal data shall be..."
+        paragraphs: ["...", "..."]
+    ]
+    full_text: "Complete document text..."
+  ```
+- Validates CELEX references and language codes
+- Handles 5 languages: EN, FR, DE, ES, PT
+- Output: JSON files in `data/parsed/` (one per document)
+
+**Expected Results**:
+- Successfully parsed: >95% of documents
+- Processing time: 4-6 hours with 24 workers
+- Output size: ~8-10GB parsed JSON
+
 #### 1.2 Build CPT Corpus
 
 ```bash
@@ -219,10 +432,35 @@ python data_processing/dataset_builders/cpt_corpus_builder.py \
   --num_shards 32
 ```
 
-Expected output (5 languages):
-- ~5GB CPT corpus
-- 32 training shards
+**What This Does**:
+- Converts parsed documents into packed training sequences
+- **Document Packing Algorithm**:
+  1. Tokenizes each document using LLaMA tokenizer
+  2. Packs multiple documents into 4096-token sequences for efficiency
+  3. Adds `<s>` (BOS) and `</s>` (EOS) tokens between documents
+  4. Maintains >90% packing efficiency (minimizes padding)
+- **Language Distribution** (automatically balanced):
+  - English (EN): 35%
+  - French (FR): 25%
+  - German (DE): 20%
+  - Spanish (ES): 12%
+  - Portuguese (PT): 8%
+- **Output Format**: Parquet files with columns:
+  - `input_ids`: Token IDs (int64 array)
+  - `attention_mask`: Attention mask (int64 array)
+  - `labels`: Labels for causal LM (int64 array, same as input_ids)
+- **Sharding**: Creates 32 shards for efficient distributed data loading
+- **Split**: 95% train / 5% validation
+- **Statistics**: Generates `corpus_statistics.json` with token counts, sequence counts, document counts
+
+**Expected Output** (5 languages):
+- ~5GB CPT corpus in Parquet format
+- 32 training shards: `data/cpt/train/cpt_train_shard_{00-31}.parquet`
+- 1 validation file: `data/cpt/validation/cpt_validation.parquet`
 - ~446M tokens (178.6M for current 2 languages, projected 446M for all 5)
+- ~41,658 training sequences (16,663 current)
+- ~2,313 validation sequences (925 current)
+- Average sequence length: ~10,700 tokens
 
 #### 1.3 Transfer Data to GPU Cluster
 
@@ -283,7 +521,7 @@ USE_FSDP=false ./scripts/run_training.sh cpt
 - Step-based training provides predictable time/cost estimates
 - Standard best practice for continued pretraining in LLM research
 
-#### Fast CPT Training Option (4-6 hours)
+#### Fast CPT Training Option (45-60 minutes)
 
 For faster iteration and prototyping, use the **Fast CPT Training** approach:
 
