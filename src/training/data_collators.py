@@ -32,8 +32,8 @@ class DataCollatorForCPT:
         Returns:
             Batch dictionary with input_ids, attention_mask, and labels
         """
-        # Extract input_ids
-        input_ids = [f['input_ids'] for f in features]
+        # Extract input_ids, truncating any sequences that exceed max_length
+        input_ids = [f['input_ids'][:self.max_length] for f in features]
 
         # Pad sequences
         batch = self.tokenizer.pad(

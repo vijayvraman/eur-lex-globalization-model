@@ -113,8 +113,7 @@ run_cpt_training() {
             --master_port=29500 \
             scripts/train_cpt.py \
             --config configs/cpt_config.yaml \
-            --fsdp \
-            --fsdp_config cpt \
+            --fsdp_config configs/fsdp_config.json \
             --use_fp8 \
             --precision "$PRECISION"
     else
@@ -203,8 +202,7 @@ run_sft_training() {
             --master_port=29500 \
             scripts/train_sft.py \
             --config configs/sft_config.yaml \
-            --fsdp \
-            --fsdp_config sft \
+            --fsdp_config configs/fsdp_config.json \
             --use_fp8 \
             --precision "$PRECISION"
     else

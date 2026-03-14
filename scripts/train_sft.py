@@ -133,8 +133,8 @@ def main():
                        help='Path to DeepSpeed config')
     parser.add_argument('--fsdp', action='store_true',
                        help='Enable FSDP2 training (replaces DeepSpeed)')
-    parser.add_argument('--fsdp_config', type=str, default='sft',
-                       help='FSDP config type: cpt, sft, or fast_cpt')
+    parser.add_argument('--fsdp_config', type=str, default='configs/fsdp_config.json',
+                       help='Path to FSDP config')
     parser.add_argument('--use_fp8', action='store_true',
                        help='Enable quantization via Transformer Engine')
     parser.add_argument('--precision', type=str, default='fp8', choices=['fp8', 'nvfp4'],
@@ -220,13 +220,12 @@ def main():
         load_best_model_at_end=training_config.get('load_best_model_at_end', True),
         metric_for_best_model=training_config.get('metric_for_best_model', 'eval_loss'),
         bf16=training_config['bf16'],
-        # Gradient checkpointing handled by FSDP wrapping, not Trainer
-        gradient_checkpointing=False if args.fsdp else training_config['gradient_checkpointing'],
-        **distributed_kwargs,  # FSDP or DeepSpeed configuration
+        gradient_checkpointing=training_config['gradient_checkpointing'],
+        fsdp="full_shard auto_wrap",
+        fsdp_config=args.fsdp_config,
         report_to=training_config.get('report_to', 'wandb'),
         logging_dir=training_config.get('logging_dir', 'logs/sft_training'),
         run_name=config.get('wandb', {}).get('name', 'sft-training'),
-        ddp_find_unused_parameters=False,
         dataloader_num_workers=config['data'].get('preprocessing_num_workers', 4),
         dataloader_pin_memory=True,
     )
@@ -250,7 +249,7 @@ def main():
         train_dataset=dataset['train'],
         eval_dataset=dataset['validation'],
         data_collator=data_collator,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
 
     # Log configuration

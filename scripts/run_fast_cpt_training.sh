@@ -255,8 +255,7 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
                 --master_port=29500 \
                 scripts/train_cpt.py \
                 --config configs/cpt_config_fast.yaml \
-                --fsdp \
-                --fsdp_config fast_cpt \
+            	--fsdp_config configs/fsdp_config.json \
                 --use_fp8 \
                 --precision "$PRECISION"
         else
