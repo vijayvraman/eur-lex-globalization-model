@@ -1,0 +1,62 @@
+model:
+  name: "./checkpoints/cpt_b200/final"  # Phase 5a CPT checkpoint; falls back to cpt/final
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"
+  use_cache: false
+
+training:
+  output_dir: "./checkpoints/sft_b200"
+  per_device_train_batch_size: 8   # 2x RTX Pro 6000 (192GB HBM3e vs 96GB GDDR7)
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-6            # Lower LR for refined SFT from strong CPT base
+  num_train_epochs: 5              # 5 epochs vs 3 on RTX Pro 6000
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  logging_steps: 10
+  save_steps: 500
+  eval_steps: 500
+  save_total_limit: 10
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+
+  bf16: true
+  quantization: true
+  gradient_checkpointing: true
+
+  # Precision mode (B200 GPUs — NVFP4 is production-ready on Blackwell)
+  # nvfp4: ~30GB per GPU — well within B200's 192GB HBM3e
+  # fp8:   ~55GB per GPU — also fits comfortably
+  precision: "nvfp4"  # Default: nvfp4 (production-ready on B200)
+
+  use_fsdp: true
+  fsdp_sharding_strategy: "full_shard"
+  deepspeed: "configs/ds_config_zero3_sft.json"
+
+  report_to: "wandb"
+
+transformer_engine:
+  enabled: true
+  fp8_format: "hybrid"
+  fp8_amax_history_len: 1024
+  nvfp4_block_size: 16
+
+data:
+  train_file: "data/sft/train/sft_train_shard_*.jsonl"
+  validation_file: "data/sft/validation/sft_val.jsonl"
+  max_seq_length: 4096             # 2x RTX Pro 6000 — longer context for richer Q&A
+  preprocessing_num_workers: 16
+
+sft:
+  mask_inputs: true
+  system_prompt: |
+    You are a specialized legal assistant for European Union law. You provide accurate information about EU regulations, directives, and legal documents from EUR-Lex. Always cite specific articles and CELEX numbers when answering.
+
+    Disclaimer: This is an AI assistant and does not constitute legal advice. Always consult official EUR-Lex sources and legal professionals for authoritative information.
+
+wandb:
+  project: "llama33-70b-eurlex"
+  name: "sft-b200-advanced"
+  entity: null

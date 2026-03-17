@@ -1,19 +1,20 @@
 #!/bin/bash
-# Training Orchestration Script for GPU Cluster
+# Training Orchestration Script - Phases 2 & 3
 #
-# Runs CPT and SFT training on 4x B200 GPUs with FP4 quantization
+# Runs CPT and SFT training on 4x RTX Pro 6000 GPUs (96GB GDDR7 each)
+# For Phase 5 advanced training on 4x B200 GPUs, use run_training_b200.sh
 
 set -e
 
 echo "=========================================="
-echo "EUR-Lex Model Training (4x B200 GPUs)"
+echo "EUR-Lex Model Training (4x RTX Pro 6000)"
 echo "=========================================="
 echo ""
 
 # Configuration
 PHASE=${1:-"both"}  # cpt, sft, or both
 USE_FSDP=${USE_FSDP:-"true"}  # Default to FSDP2 (NVIDIA Blackwell optimized), set to "false" for DeepSpeed
-PRECISION=${PRECISION:-"fp8"}  # Precision mode: "fp8" (default) or "nvfp4" (experimental)
+PRECISION=${PRECISION:-"fp8"}  # Precision mode: "fp8" only (NVFP4 is B200+ only, not supported on RTX Pro 6000)
 BASE_DIR="$(pwd)"
 
 # Verify GPU availability
@@ -25,9 +26,11 @@ fi
 # Count GPUs
 GPU_COUNT=$(nvidia-smi --list-gpus | wc -l)
 echo "Detected GPUs: $GPU_COUNT"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1 | awk '{print "GPU: " $0}'
+echo ""
 
 if [ "$GPU_COUNT" -ne 4 ]; then
-    echo "Warning: Expected 4 GPUs, found $GPU_COUNT"
+    echo "Warning: Expected 4 RTX Pro 6000 GPUs, found $GPU_COUNT"
     read -p "Continue anyway? (y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -36,15 +39,14 @@ if [ "$GPU_COUNT" -ne 4 ]; then
 fi
 
 # Display GPU info
-echo ""
 nvidia-smi --query-gpu=name,memory.total --format=csv
 echo ""
 
-# Set environment variables for Transformer Engine FP4 quantization
+# Set environment variables for Transformer Engine quantization
 export NVTE_FP8_DPA_BWD=1
 export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
 
-echo "Environment variables set for FP4 quantization:"
+echo "Environment variables set for Transformer Engine quantization:"
 echo "  NVTE_FP8_DPA_BWD=$NVTE_FP8_DPA_BWD"
 echo "  NVTE_ALLOW_NONDETERMINISTIC_ALGO=$NVTE_ALLOW_NONDETERMINISTIC_ALGO"
 echo ""
@@ -69,34 +71,31 @@ fi
 # Function to run CPT training
 run_cpt_training() {
     echo "=========================================="
-    echo "Phase 1: CPT Training"
+    echo "Phase 2: CPT Training (4x RTX Pro 6000)"
     echo "=========================================="
     echo "Started: $(date)"
     echo ""
 
     # Display backend and precision
     if [ "$USE_FSDP" == "true" ]; then
-        echo "Backend: PyTorch FSDP2 + Transformer Engine (NVIDIA Blackwell optimized)"
+        echo "Backend: PyTorch FSDP2 + Transformer Engine (Blackwell optimized)"
     else
         echo "Backend: DeepSpeed ZeRO-3 + Transformer Engine"
     fi
 
-    if [ "$PRECISION" == "nvfp4" ]; then
-        echo "Precision: NVFP4 (4-bit E2M1) - Experimental"
-        echo "  → Expected memory: ~35GB per GPU"
-        echo "  → 50% memory savings vs FP8"
-    else
-        echo "Precision: FP8 (8-bit E4M3/E5M2) - Default"
-        echo "  → Expected memory: ~70GB per GPU"
-    fi
+    echo "Precision: FP8 (8-bit E4M3/E5M2)"
+    echo "  → Expected memory: ~70GB per GPU (fits in 96GB GDDR7, ~73% utilization)"
+    echo "  → Note: NVFP4 is B200+ only and not supported on RTX Pro 6000"
+    echo ""
 
     echo "Configuration:"
     echo "  Model: LLaMA 3.3 70B"
-    echo "  GPUs: 4x B200"
+    echo "  GPUs: 4x RTX Pro 6000 (96GB GDDR7 each)"
     echo "  Batch size: 2 per GPU × 4 GPUs × 16 grad_accum = 128"
     echo "  Learning rate: 2e-5"
-    echo "  Steps: 40,000"
-    echo "  Estimated time: 20-24 hours"
+    echo "  Steps: 4,260 (5 epochs over 446M tokens)"
+    echo "  Estimated time: 12-18 hours"
+    echo "  Checkpoint: checkpoints/cpt/final"
     echo ""
     read -p "Start CPT training? (y/n) " -n 1 -r
     echo
@@ -134,53 +133,55 @@ run_cpt_training() {
     echo "✓ CPT training complete in $(($DURATION / 3600))h $(($DURATION % 3600 / 60))m"
     echo "Finished: $(date)"
     echo ""
-    echo "Checkpoint location: checkpoints/cpt/final"
+    echo "Checkpoint: checkpoints/cpt/final"
     echo "Logs: logs/cpt_training/"
+    echo ""
+    echo "Next: Run Phase 3 SFT training, or transfer checkpoint for Phase 5 (B200)"
     echo ""
 }
 
 # Function to run SFT training
 run_sft_training() {
     echo "=========================================="
-    echo "Phase 2: SFT Training"
+    echo "Phase 3: SFT Training (4x RTX Pro 6000)"
     echo "=========================================="
     echo "Started: $(date)"
     echo ""
 
     # Display backend and precision
     if [ "$USE_FSDP" == "true" ]; then
-        echo "Backend: PyTorch FSDP2 + Transformer Engine (NVIDIA Blackwell optimized)"
+        echo "Backend: PyTorch FSDP2 + Transformer Engine (Blackwell optimized)"
     else
         echo "Backend: DeepSpeed ZeRO-3 + Transformer Engine"
     fi
 
-    if [ "$PRECISION" == "nvfp4" ]; then
-        echo "Precision: NVFP4 (4-bit E2M1) - Experimental"
-        echo "  → Expected memory: ~20GB per GPU"
-        echo "  → 50% memory savings vs FP8"
-    else
-        echo "Precision: FP8 (8-bit E4M3/E5M2) - Default"
-        echo "  → Expected memory: ~40GB per GPU"
-    fi
+    echo "Precision: FP8 (8-bit E4M3/E5M2)"
+    echo "  → Expected memory: ~40GB per GPU (fits in 96GB GDDR7, ~42% utilization)"
+    echo "  → Note: NVFP4 is B200+ only and not supported on RTX Pro 6000"
+    echo ""
 
     echo "Configuration:"
-    echo "  Model: CPT checkpoint"
-    echo "  GPUs: 4x B200"
+    echo "  Model: Phase 2 CPT checkpoint"
+    echo "  GPUs: 4x RTX Pro 6000 (96GB GDDR7 each)"
     echo "  Batch size: 4 per GPU × 4 GPUs × 8 grad_accum = 128"
     echo "  Learning rate: 5e-6"
     echo "  Epochs: 3"
+    echo "  Seq length: 2048 tokens"
     echo "  Input masking: Enabled"
     echo "  Estimated time: 6-8 hours"
     echo ""
 
     # Check if CPT checkpoint exists
     if [ ! -d "models/llama33-70b-eurlex-cpt-final" ] && [ ! -d "checkpoints/cpt/final" ]; then
-        echo "Warning: CPT checkpoint not found"
+        echo "Warning: Phase 2 CPT checkpoint not found"
         echo "Looking in:"
-        echo "  - models/llama33-70b-eurlex-cpt-final"
         echo "  - checkpoints/cpt/final"
+        echo "  - models/llama33-70b-eurlex-cpt-final"
         echo ""
-        read -p "Continue with base model? (y/n) " -n 1 -r
+        echo "Run Phase 2 CPT training first:"
+        echo "  ./scripts/run_training.sh cpt"
+        echo ""
+        read -p "Continue with base LLaMA model instead? (y/n) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             return
@@ -223,8 +224,10 @@ run_sft_training() {
     echo "✓ SFT training complete in $(($DURATION / 3600))h $(($DURATION % 3600 / 60))m"
     echo "Finished: $(date)"
     echo ""
-    echo "Model location: checkpoints/sft/final"
+    echo "Checkpoint: checkpoints/sft/final"
     echo "Logs: logs/sft_training/"
+    echo ""
+    echo "Next: Run Phase 4 evaluation, or use checkpoints for Phase 5 (B200 advanced)"
     echo ""
 }
 
@@ -251,38 +254,39 @@ case "$PHASE" in
 esac
 
 echo "=========================================="
-echo "Training Complete! ✓"
+echo "Phases 2 & 3 Complete! ✓"
 echo "=========================================="
 echo ""
 echo "Next steps:"
-echo "  1. Evaluate model:"
-echo "     python scripts/evaluate_model.py \\"
-echo "       --model_path checkpoints/sft/final \\"
-echo "       --eval_dataset data/sft/validation/sft_val.jsonl \\"
-echo "       --output_file results/evaluation_report.json"
 echo ""
-echo "  2. Convert checkpoint for inference:"
-echo "     python src/utils/checkpoint_utils.py convert-fp4 \\"
-echo "       --model_path checkpoints/sft/final \\"
-echo "       --output_path models/llama33-70b-eurlex-sft-final"
+echo "  Phase 4 - Evaluate model:"
+echo "    python scripts/evaluate_model.py \\"
+echo "      --model_path checkpoints/sft/final \\"
+echo "      --eval_dataset data/sft/validation/sft_val.jsonl \\"
+echo "      --output_file results/evaluation_report.json"
+echo ""
+echo "  Phase 5 - Advanced training on 4x B200 (optional):"
+echo "    ./scripts/run_training_b200.sh both"
 echo ""
 echo "================================================================================"
-echo "Usage Examples:"
+echo "Usage (Phases 2 & 3 — 4x RTX Pro 6000):"
 echo "================================================================================"
 echo ""
-echo "Default (FSDP2 + FP8):"
-echo "  ./scripts/run_training.sh both"
-echo ""
-echo "Run only CPT or SFT:"
+echo "Phase 2 only (CPT):"
 echo "  ./scripts/run_training.sh cpt"
+echo ""
+echo "Phase 3 only (SFT):"
 echo "  ./scripts/run_training.sh sft"
 echo ""
-echo "Use NVFP4 (4-bit, experimental, 50% memory savings):"
-echo "  PRECISION=nvfp4 ./scripts/run_training.sh both"
+echo "Both phases:"
+echo "  ./scripts/run_training.sh both"
 echo ""
-echo "Use DeepSpeed ZeRO-3 (legacy):"
+echo "Note: NVFP4 is NOT supported on RTX Pro 6000 (B200+ only)."
+echo "  FP8 is the only quantization mode for Phases 2 & 3."
+echo ""
+echo "DeepSpeed ZeRO-3 (legacy fallback):"
 echo "  USE_FSDP=false ./scripts/run_training.sh both"
 echo ""
-echo "Combine options:"
-echo "  PRECISION=nvfp4 USE_FSDP=true ./scripts/run_training.sh cpt"
+echo "For Phase 5 advanced training on 4x B200:"
+echo "  ./scripts/run_training_b200.sh both"
 echo ""

@@ -1,0 +1,53 @@
+model:
+  name: "meta-llama/Llama-3.3-70B-Instruct"
+  torch_dtype: "bfloat16"
+  attn_implementation: "flash_attention_2"
+  use_cache: false
+
+training:
+  output_dir: "./checkpoints/cpt_b200"
+  per_device_train_batch_size: 4   # 2x RTX Pro 6000 (192GB HBM3e vs 96GB GDDR7)
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-5            # Lower LR for continued pretraining / refinement
+  max_steps: 8520                  # 10 epochs over 446M tokens
+  lr_scheduler_type: "cosine"
+  warmup_steps: 852                # 10% of max_steps
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  logging_steps: 10
+  save_steps: 1000
+  eval_steps: 1000
+  save_total_limit: 5
+
+  bf16: true
+  quantization: true
+  gradient_checkpointing: true
+
+  # Precision mode (B200 GPUs — NVFP4 is production-ready on Blackwell)
+  # nvfp4: 4-bit (E2M1) — Default on B200, ~50GB per GPU with 8192-token seqs
+  # fp8:   8-bit (E4M3/E5M2) — ~90GB per GPU, also fits in B200's 192GB HBM3e
+  precision: "nvfp4"  # Default: nvfp4 (production-ready on B200)
+
+  use_fsdp: true
+  fsdp_sharding_strategy: "full_shard"
+  deepspeed: "configs/ds_config_zero3.json"
+
+  report_to: "wandb"
+
+transformer_engine:
+  enabled: true
+  fp8_format: "hybrid"
+  fp8_amax_history_len: 1024
+  nvfp4_block_size: 16
+
+data:
+  train_file: "data/cpt/train/cpt_train_shard_*.parquet"
+  validation_file: "data/cpt/validation/cpt_val.parquet"
+  max_seq_length: 8192             # 2x RTX Pro 6000 — B200 memory enables longer context
+  preprocessing_num_workers: 16
+
+wandb:
+  project: "llama33-70b-eurlex"
+  name: "cpt-b200-advanced"
+  entity: null

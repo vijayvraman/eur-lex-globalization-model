@@ -1,16 +1,18 @@
 #!/bin/bash
-# Fast CPT Training Workflow (4-6 hours)
+# Fast CPT Training Workflow — Phase 2 variant
 #
 # Implements the Hybrid Approach from docs/FAST_TRAINING_OPTIONS.md:
 # 1. Filter corpus to top 40% quality documents (~2B tokens)
 # 2. Build CPT corpus with 3072 token sequences
-# 3. Train for 12,000 steps with slightly higher learning rate
+# 3. Train for 2 epochs with slightly higher learning rate
+#
+# Hardware: 4x RTX Pro 6000 (96GB GDDR7 each)
+# For faster results on 4x B200, use run_training_b200.sh
 #
 # Expected results:
-# - Training time: 4-6 hours (vs 20-24 hours for full CPT)
-# - Cost: ~$180 (vs $500)
+# - Training time: 4-6 hours (vs 12-18 hours for full CPT on RTX Pro 6000)
 # - Quality: 75-80% of full CPT
-# - Good enough for most applications
+# - Good enough for rapid prototyping
 
 set -e
 
@@ -192,9 +194,10 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
 
         GPU_COUNT=$(nvidia-smi --list-gpus | wc -l)
         echo "Detected GPUs: $GPU_COUNT"
+        nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1
 
         if [ "$GPU_COUNT" -lt 4 ]; then
-            echo "Warning: Expected 4 GPUs, found $GPU_COUNT"
+            echo "Warning: Expected 4 RTX Pro 6000 GPUs, found $GPU_COUNT"
             read -p "Continue anyway? (y/n) " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -208,28 +211,24 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
 
         # Display backend and precision
         if [ "$USE_FSDP" == "true" ]; then
-            echo "Backend: PyTorch FSDP2 + Transformer Engine (NVIDIA Blackwell optimized)"
+            echo "Backend: PyTorch FSDP2 + Transformer Engine (Blackwell optimized)"
         else
             echo "Backend: DeepSpeed ZeRO-3 + Transformer Engine"
         fi
 
-        if [ "$PRECISION" == "nvfp4" ]; then
-            echo "Precision: NVFP4 (4-bit E2M1) - Experimental"
-            echo "  → Expected memory: ~35GB per GPU"
-            echo "  → 50% memory savings vs FP8"
-        else
-            echo "Precision: FP8 (8-bit E4M3/E5M2) - Default"
-            echo "  → Expected memory: ~70GB per GPU"
-        fi
+        echo "Precision: FP8 (8-bit E4M3/E5M2)"
+        echo "  → Expected memory: ~70GB per GPU (fits in 96GB GDDR7, ~73% utilization)"
+        echo "  → Note: NVFP4 is B200+ only and not supported on RTX Pro 6000"
+        echo ""
 
         echo "Training configuration:"
         echo "  Model: LLaMA 3.3 70B"
-        echo "  Steps: 12,000 (vs 40,000 full)"
+        echo "  Hardware: 4x RTX Pro 6000 (96GB GDDR7)"
+        echo "  Steps: 2,270 (2 epochs over 446M tokens)"
         echo "  Sequence length: 3,072 (vs 4,096 full)"
         echo "  Learning rate: 3e-5 (vs 2e-5 full)"
         echo "  Batch size: 2 per GPU × 4 GPUs × 16 = 128"
         echo "  Expected time: 4-6 hours"
-        echo "  Expected cost: ~$180"
         echo ""
 
         read -p "Start fast CPT training? (y/n) " -n 1 -r
@@ -295,18 +294,21 @@ if [ -d "$FILTERED_DIR/train" ] && [ -d "$FILTERED_DIR/validation" ]; then
         echo "       --full checkpoints/cpt/final"
         echo ""
         echo "================================================================================"
-        echo "Usage:"
+        echo "Usage (4x RTX Pro 6000 — Phase 2 fast variant):"
         echo "  Default (FSDP2 + FP8):"
         echo "    ./scripts/run_fast_cpt_training.sh"
         echo ""
-        echo "  Use NVFP4 (4-bit, experimental, 50% memory savings):"
-        echo "    PRECISION=nvfp4 ./scripts/run_fast_cpt_training.sh"
+        echo "  Note: NVFP4 is NOT supported on RTX Pro 6000 (B200+ only)."
+        echo "  FP8 is the only quantization mode available on RTX Pro 6000."
         echo ""
-        echo "  With DeepSpeed ZeRO-3 (legacy):"
+        echo "  DeepSpeed ZeRO-3 (legacy):"
         echo "    USE_FSDP=false ./scripts/run_fast_cpt_training.sh"
         echo ""
-        echo "  Combine options:"
-        echo "    PRECISION=nvfp4 USE_FSDP=true ./scripts/run_fast_cpt_training.sh"
+        echo "  For full CPT (5 epochs, 12-18h):"
+        echo "    ./scripts/run_training.sh cpt"
+        echo ""
+        echo "  For advanced CPT on 4x B200:"
+        echo "    ./scripts/run_training_b200.sh cpt"
         echo "================================================================================"
         echo ""
     fi

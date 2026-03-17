@@ -26,10 +26,11 @@ training:
   quantization: true  # Enable quantization via Transformer Engine
   gradient_checkpointing: true
 
-  # Precision mode (Blackwell B200 GPUs)
-  # fp8: 8-bit FP8 (E4M3/E5M2) - Default, stable, ~70GB for 70B model
-  # nvfp4: 4-bit NVFP4 (E2M1) - Experimental, ~35GB for 70B model
-  precision: "fp8"  # Default: fp8 (recommended)
+  # Precision mode — RTX Pro 6000 (Phase 3)
+  # fp8: 8-bit FP8 (E4M3/E5M2) — Only supported quantization on RTX Pro 6000
+  #      ~40GB per GPU (fits in 96GB GDDR7)
+  # nvfp4: NOT supported on RTX Pro 6000 (B200+ only) — use sft_config_b200.yaml
+  precision: "fp8"
 
   # Distributed training configuration
   # FSDP2 is the default (NVIDIA's recommended stack for Blackwell B200 GPUs)

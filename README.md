@@ -1,16 +1,17 @@
 # EUR-Lex Legal Q&A Model: LLaMA 3.3 70B Fine-Tuning
 
-Train LLaMA 3.3 70B on 25GB FORMEX XML data (EN/FR/DE/ES/PT) for legal Q&A with citations using CPT and SFT with FP8/NVFP4 quantization on NVIDIA B200 GPUs.
+Train LLaMA 3.3 70B on 25GB FORMEX XML data (EN/FR/DE/ES/PT) for legal Q&A with citations using CPT and SFT with 
+FP8 quantization on Nvidia RTX Pro 6000 and NVFP4 quantization on B200 GPUs.
 
 ## Overview
 
 - **Base Model**: LLaMA 3.3 70B Instruct
 - **Data**: 25GB FORMEX XML from EUR-Lex (5 languages)
-- **Hardware**: Mac Studio (data processing) + 4x NVIDIA B200 GPUs (training)
+- **Hardware**: Mac Studio (data processing) + 4x RTX Pro 6000 (standard training) + 4x B200 (advanced training)
 - **Training**: CPT (domain adaptation) → SFT (instruction-tuning)
 - **Optimization**: FP8 (default) or NVFP4 quantization via Transformer Engine
 - **Distributed**: PyTorch FSDP2 (NVIDIA's recommended stack for Blackwell)
-- **Timeline**: ~1 day total (with optimized training and balanced epochs)
+- **Workflow**: 5-phase pipeline — data processing, CPT, SFT, evaluation, and advanced B200 training
 
 ## Table of Contents
 
@@ -24,9 +25,10 @@ Train LLaMA 3.3 70B on 25GB FORMEX XML data (EN/FR/DE/ES/PT) for legal Q&A with 
 - [Scripts Reference](#scripts-reference)
 - [Usage](#usage)
   - [Phase 1: Data Processing (Mac Studio)](#phase-1-data-processing-mac-studio)
-  - [Phase 2: CPT Training (4x B200 GPUs)](#phase-2-cpt-training-4x-b200-gpus)
-  - [Phase 3: SFT Training (4x B200 GPUs)](#phase-3-sft-training-4x-b200-gpus)
+  - [Phase 2: CPT Training (4x RTX Pro 6000)](#phase-2-cpt-training-4x-rtx-pro-6000)
+  - [Phase 3: SFT Training (4x RTX Pro 6000)](#phase-3-sft-training-4x-rtx-pro-6000)
   - [Phase 4: Evaluation](#phase-4-evaluation)
+  - [Phase 5: Advanced CPT and SFT Training (4x B200)](#phase-5-advanced-cpt-and-sft-training-4x-b200)
 - [Model Comparison & QnA Testing](#model-comparison--qna-testing)
 - [Preventing Catastrophic Forgetting](#preventing-catastrophic-forgetting)
 - [Configuration](#configuration)
@@ -42,17 +44,19 @@ Train LLaMA 3.3 70B on 25GB FORMEX XML data (EN/FR/DE/ES/PT) for legal Q&A with 
 
 ## Key Features
 
-✅ **FP8/NVFP4 Quantization**: 50% memory reduction (FP8) or 75% (NVFP4), similar throughput
-
 ✅ **Multilingual**: EN (35%), FR (25%), DE (20%), ES (12%), PT (8%)
 
 ✅ **Citation-Aware**: Automatic CELEX reference extraction and validation
 
-✅ **FSDP2 + Transformer Engine**: NVIDIA's recommended stack for Blackwell B200 GPUs
-
 ✅ **Balanced Training**: 5 epochs to prevent catastrophic forgetting
 
 ✅ **Document Packing**: Efficient 4096-token sequence packing
+
+✅ **FP8 Quantization**: 50% memory reduction vs BF16, production-ready on RTX Pro 6000 and B200
+
+✅ **FSDP2 + Transformer Engine**: NVIDIA's recommended distributed training stack for Blackwell GPUs
+
+✅ **NVFP4 Quantization** *(Phase 5 — B200 only)*: Additional 50% memory reduction vs FP8 (75% vs BF16)
 
 ## Precision Modes
 
@@ -105,7 +109,7 @@ This project supports two precision modes via NVIDIA Transformer Engine on Black
 - **E2M1**: 1 sign + 2 exponent + 1 mantissa bit (range: ±6, precision: ~12.5% before scaling)
 - **Block Scaling**: 16-element (activations/gradients) or 16×16 (weights) blocks
 - **Scale Precision**: FP8 E4M3 (activations) or FP16 (weights)
-- **Status**: Experimental (Blackwell B200+ only)
+- **Status**: Experimental (B200/B100 data center GPUs only — **not available on RTX Pro 6000**)
 
 ### Memory Breakdown (LLaMA 3.3 70B, CPT Training)
 
@@ -119,32 +123,36 @@ This project supports two precision modes via NVIDIA Transformer Engine on Black
 
 ### Quick Comparison
 
-| Feature | FP8 (Default) | NVFP4 (Experimental) |
-|---------|---------------|----------------------|
+| Feature | FP8 | NVFP4 |
+|---------|-----|-------|
 | **Memory per GPU (CPT)** | ~70GB | ~35GB (-50%) |
 | **Memory per GPU (SFT)** | ~40GB | ~20GB (-50%) |
 | **Training Speed** | 90K tok/s | 88K tok/s (-2%) |
 | **Model Quality** | 100% | 95-98% |
 | **Stability** | Production-ready | Experimental |
-| **Hardware** | H100+, B200+ | B200+ only |
+| **Hardware** | H100+, B200+, **RTX Pro 6000** | **B200/B100 only** (GB100 die) |
+| **Used in phases** | **2, 3** (RTX Pro 6000) and 5 (B200) | **5 only** (B200) |
 
-### Usage Examples
+### Usage by Hardware
 
-**Default (FP8)**:
+**Phases 2 & 3 — RTX Pro 6000 (FP8 only)**:
 ```bash
-# FP8 is the default - no flags needed
+# FP8 is the only quantization mode on RTX Pro 6000
 ./scripts/run_training.sh both
 ```
 
-**NVFP4 (50% memory savings)**:
+**Phase 5 — B200 (FP8 or NVFP4)**:
 ```bash
-# Enable NVFP4 for memory-constrained scenarios
-PRECISION=nvfp4 ./scripts/run_training.sh both
+# NVFP4 default — production-ready on B200, 50% memory savings
+./scripts/run_training_b200.sh both
+
+# FP8 on B200 — maximum quality
+PRECISION=fp8 ./scripts/run_training_b200.sh both
 ```
 
 **When to Use**:
-- **FP8**: Production training, maximum quality, stable (recommended)
-- **NVFP4**: Memory constraints, experimental, can tolerate 2-5% quality loss
+- **FP8**: Phases 2 & 3 (required on RTX Pro 6000); Phase 5 for maximum quality
+- **NVFP4**: Phase 5 only (B200/B100 required); use when memory headroom or 2-5% quality tradeoff is acceptable
 
 **See `docs/PRECISION_MODES.md` for detailed comparison, performance benchmarks, and troubleshooting.**
 
@@ -168,9 +176,10 @@ PRECISION=nvfp4 ./scripts/run_training.sh both
 
 ## Installation
 
-This project uses a **two-machine setup**:
-1. **Mac Studio**: Data processing (FORMEX parsing, corpus building)
-2. **GPU Cluster (4x B200)**: Model training with FP4 quantization
+This project uses a **three-environment setup**:
+1. **Mac Studio**: Data processing (FORMEX parsing, corpus building) — Phase 1
+2. **4x RTX Pro 6000** (96GB GDDR7): Standard CPT + SFT training — Phases 2 & 3
+3. **4x B200** (192GB HBM3e): Advanced CPT + SFT with larger context — Phase 5
 
 ### Setup on Mac Studio (Data Processing)
 
@@ -345,9 +354,10 @@ eur-lex-globalization-model/
 |--------|---------|--------------|
 | **`scripts/train_cpt.py`** | Continued Pretraining script | - Trains LLaMA 3.3 70B on EUR-Lex corpus<br>- Supports FSDP2 and DeepSpeed backends<br>- FP8/NVFP4 quantization support<br>- 4,260 steps (5 epochs) for balanced learning<br>- Distributed training across 4x B200 GPUs |
 | **`scripts/train_sft.py`** | Supervised Fine-Tuning script | - Instruction fine-tuning on Q&A pairs<br>- Input masking (loss only on responses)<br>- 3 epochs with early stopping<br>- Same distributed training support as CPT |
-| **`scripts/run_training.sh`** | Main training orchestrator | - Launches CPT, SFT, or both phases<br>- Auto-detects FSDP vs DeepSpeed mode<br>- Supports FP8/NVFP4 via `PRECISION` env var<br>- Manages checkpointing and logging<br>- Usage: `./scripts/run_training.sh [cpt|sft|both]` |
-| **`scripts/run_fast_cpt_training.sh`** | Fast CPT training (2 epochs) | - 45-60 minute training time<br>- 2 epochs through 446M tokens<br>- 3072-token sequences (vs 4096)<br>- ~$35 cost (vs $85 for full CPT)<br>- Ideal for rapid prototyping |
-| **`scripts/run_full_pipeline.sh`** | Full end-to-end pipeline (legacy) | - Runs data processing + training + evaluation<br>- Maintained for backward compatibility<br>- Useful for batch processing |
+| **`scripts/run_training.sh`** | Phases 2 & 3 training orchestrator (RTX Pro 6000) | - Launches CPT, SFT, or both phases on 4x RTX Pro 6000<br>- Supports FP8/NVFP4 via `PRECISION` env var<br>- FSDP2 default; DeepSpeed via `USE_FSDP=false`<br>- Usage: `./scripts/run_training.sh [cpt\|sft\|both]` |
+| **`scripts/run_training_b200.sh`** | Phase 5 advanced training orchestrator (B200) | - Advanced CPT + SFT on 4x B200 (192GB HBM3e)<br>- 8192-token CPT / 4096-token SFT sequences<br>- NVFP4 default (production-ready on B200)<br>- Warm-start from Phase 2/3 checkpoints<br>- Usage: `./scripts/run_training_b200.sh [cpt\|sft\|both]` |
+| **`scripts/run_fast_cpt_training.sh`** | Fast CPT training variant (Phase 2) | - 4-6 hour training time on RTX Pro 6000<br>- 2 epochs through 446M tokens<br>- 3072-token sequences (vs 4096)<br>- Ideal for rapid prototyping |
+| **`scripts/run_full_pipeline.sh`** | Full data processing pipeline | - Parses XML, builds CPT corpus, builds SFT dataset<br>- Maintained for batch data processing<br>- Use before Phases 2, 3, or 5 |
 
 ### Data Processing Scripts
 
@@ -370,7 +380,7 @@ eur-lex-globalization-model/
 |--------|---------|--------------|
 | **`setup.sh`** | Auto-detection setup | - Detects Mac vs Linux environment<br>- Calls appropriate setup script<br>- Recommended for first-time setup |
 | **`setup_mac.sh`** | Mac Studio setup | - PyTorch with CPU/MPS support<br>- Data processing libraries (lxml, pandas, datasets)<br>- No CUDA dependencies (macOS incompatible) |
-| **`setup_gpu.sh`** | GPU cluster setup | - PyTorch with CUDA 12.8+ support<br>- NVIDIA Transformer Engine (FP8/NVFP4)<br>- Flash Attention 2<br>- All training dependencies |
+| **`setup_gpu.sh`** | GPU cluster setup (RTX Pro 6000 or B200) | - PyTorch with CUDA 12.8+ support<br>- NVIDIA Transformer Engine (FP8/NVFP4)<br>- Flash Attention 2<br>- All training dependencies<br>- Works on both RTX Pro 6000 and B200 |
 
 ### Testing & Validation Scripts
 
@@ -380,11 +390,32 @@ eur-lex-globalization-model/
 
 ## Usage
 
+The pipeline is organized into 5 phases across 3 hardware environments:
+
+| Phase | Environment | Script | Est. Time |
+|-------|-------------|--------|-----------|
+| **1** Data Processing | Mac Studio | `run_full_pipeline.sh` | 4-6h |
+| **2** CPT Training | 4x RTX Pro 6000 | `run_training.sh cpt` | 12-18h |
+| **3** SFT Training | 4x RTX Pro 6000 | `run_training.sh sft` | 6-8h |
+| **4** Evaluation | Any (GPU recommended) | `evaluate_model.py` | ~15 min |
+| **5** Advanced CPT + SFT | 4x B200 | `run_training_b200.sh both` | 5-7h |
+
+Phases 1–4 form the standard pipeline. Phase 5 is optional and produces a higher-quality model using larger context windows and more epochs on B200 hardware.
+
+---
+
 ### Phase 1: Data Processing (Mac Studio)
 
 **Location**: Mac Studio
 
-#### 1.1 Parse FORMEX XML
+#### 1.1 Quick pipeline test (recommended first)
+
+```bash
+# Test all components on synthetic data (~10 min)
+./scripts/test_pipeline_sample.sh
+```
+
+#### 1.2 Parse FORMEX XML
 
 ```bash
 python data_processing/parsers/formex_parser.py \
@@ -395,24 +426,7 @@ python data_processing/parsers/formex_parser.py \
 
 **What This Does**:
 - Parses 25GB of FORMEX XML documents from EUR-Lex corpus
-- Extracts structured content into `ParsedDocument` objects:
-  ```python
-  ParsedDocument:
-    metadata:
-      celex: "32016R0679"           # CELEX number
-      language: "en"                 # Document language
-      doc_type: "regulation"         # regulation, directive, decision, etc.
-      date: "2016-04-27"            # Publication date
-      title: "General Data Protection Regulation"
-    articles: [
-      Article:
-        id: "5"
-        title: "Principles relating to processing"
-        text: "Personal data shall be..."
-        paragraphs: ["...", "..."]
-    ]
-    full_text: "Complete document text..."
-  ```
+- Extracts structured content (CELEX numbers, article text, metadata)
 - Validates CELEX references and language codes
 - Handles 5 languages: EN, FR, DE, ES, PT
 - Output: JSON files in `data/parsed/` (one per document)
@@ -422,7 +436,7 @@ python data_processing/parsers/formex_parser.py \
 - Processing time: 4-6 hours with 24 workers
 - Output size: ~8-10GB parsed JSON
 
-#### 1.2 Build CPT Corpus
+#### 1.3 Build CPT Corpus
 
 ```bash
 python data_processing/dataset_builders/cpt_corpus_builder.py \
@@ -433,166 +447,216 @@ python data_processing/dataset_builders/cpt_corpus_builder.py \
 ```
 
 **What This Does**:
-- Converts parsed documents into packed training sequences
-- **Document Packing Algorithm**:
-  1. Tokenizes each document using LLaMA tokenizer
-  2. Packs multiple documents into 4096-token sequences for efficiency
-  3. Adds `<s>` (BOS) and `</s>` (EOS) tokens between documents
-  4. Maintains >90% packing efficiency (minimizes padding)
-- **Language Distribution** (automatically balanced):
-  - English (EN): 35%
-  - French (FR): 25%
-  - German (DE): 20%
-  - Spanish (ES): 12%
-  - Portuguese (PT): 8%
-- **Output Format**: Parquet files with columns:
-  - `input_ids`: Token IDs (int64 array)
-  - `attention_mask`: Attention mask (int64 array)
-  - `labels`: Labels for causal LM (int64 array, same as input_ids)
-- **Sharding**: Creates 32 shards for efficient distributed data loading
-- **Split**: 95% train / 5% validation
-- **Statistics**: Generates `corpus_statistics.json` with token counts, sequence counts, document counts
+- Packs parsed documents into 4096-token sequences (>90% packing efficiency)
+- Balanced language distribution: EN 35%, FR 25%, DE 20%, ES 12%, PT 8%
+- Output: Parquet files with `input_ids`, `attention_mask`, `labels`
+- 32 training shards + 1 validation shard (95/5 split)
+- ~446M tokens, ~41,658 training sequences (5-language projection)
 
-**Expected Output** (5 languages):
-- ~5GB CPT corpus in Parquet format
-- 32 training shards: `data/cpt/train/cpt_train_shard_{00-31}.parquet`
-- 1 validation file: `data/cpt/validation/cpt_validation.parquet`
-- ~446M tokens (178.6M for current 2 languages, projected 446M for all 5)
-- ~41,658 training sequences (16,663 current)
-- ~2,313 validation sequences (925 current)
-- Average sequence length: ~10,700 tokens
-
-#### 1.3 Transfer Data to GPU Cluster
+#### 1.4 Build SFT Dataset
 
 ```bash
-# From Mac Studio, transfer processed data to GPU cluster
-rsync -avz --progress data/cpt/ user@gpu-cluster:/path/to/project/data/cpt/
-rsync -avz --progress data/sft/ user@gpu-cluster:/path/to/project/data/sft/
-
-# Or use scp
-tar -czf cpt_data.tar.gz data/cpt/
-scp cpt_data.tar.gz user@gpu-cluster:/path/to/project/
+python data_processing/dataset_builders/sft_dataset_builder.py \
+  --input_dir data/parsed \
+  --output_dir data/sft \
+  --target_pairs 150000 \
+  --num_shards 8
 ```
 
-### Phase 2: CPT Training (4x B200 GPUs)
-
-**Location**: GPU Cluster with 4x B200 GPUs
+#### 1.5 Transfer Data to GPU Cluster
 
 ```bash
-# Launch training with FSDP2 + FP8 (default)
-./scripts/run_training.sh cpt
+# Transfer to RTX Pro 6000 cluster (Phases 2 & 3)
+rsync -avz --progress data/cpt/ user@rtx-cluster:/path/to/project/data/cpt/
+rsync -avz --progress data/sft/ user@rtx-cluster:/path/to/project/data/sft/
 
-# Or with NVFP4 for 50% memory savings
-PRECISION=nvfp4 ./scripts/run_training.sh cpt
+# Or compress and scp
+tar -czf cpt_data.tar.gz data/cpt/ && scp cpt_data.tar.gz user@rtx-cluster:/path/to/project/
+tar -czf sft_data.tar.gz data/sft/ && scp sft_data.tar.gz user@rtx-cluster:/path/to/project/
+
+# The same data is reused for Phase 5 on B200 — transfer once, use for both
+```
+
+---
+
+### Phase 2: CPT Training (4x RTX Pro 6000)
+
+**Location**: 4x RTX Pro 6000 (96GB GDDR7 each)
+
+```bash
+# FSDP2 + FP8 (only supported quantization mode on RTX Pro 6000)
+./scripts/run_training.sh cpt
 ```
 
 Or run directly:
 ```bash
-# FP8 (default)
 torchrun --nproc_per_node=4 scripts/train_cpt.py \
   --config configs/cpt_config.yaml \
-  --fsdp \
-  --fsdp_config cpt \
-  --use_fp8 \
-  --precision fp8
-
-# NVFP4 (experimental, 50% memory savings)
-torchrun --nproc_per_node=4 scripts/train_cpt.py \
-  --config configs/cpt_config.yaml \
-  --fsdp \
-  --fsdp_config cpt \
-  --use_fp8 \
-  --precision nvfp4
+  --fsdp_config configs/fsdp_config.json \
+  --use_fp8 --precision fp8
 ```
 
-**Training Time**: ~2.5-3 hours (FP8 or NVFP4)
-**Memory Usage**: ~70GB per GPU (FP8) or ~35GB per GPU (NVFP4)
-**Throughput**: ~80-100K tokens/sec
-**Cost**: ~$85 (slightly higher with NVFP4 due to longer training)
+| | FP8 |
+|--|-----|
+| **Memory/GPU** | ~70GB (73% of 96GB GDDR7) |
+| **Training time** | 12-18 hours |
+| **Steps** | 4,260 (5 epochs, 446M tokens) |
+| **Quality** | 100% |
 
-**Legacy DeepSpeed Support**: Set `USE_FSDP=false` if needed:
-```bash
-USE_FSDP=false ./scripts/run_training.sh cpt
-```
+> **Note**: NVFP4 is **not supported** on RTX Pro 6000 (GB202 die). NVFP4 requires the B200/B100 data center GPU (GB100 die). Use `run_training_b200.sh` for NVFP4.
 
-**Note on Training Duration**: CPT uses **step-based training** (`max_steps: 4260`) to achieve **5 epochs** through the 446M token corpus. This is balanced to prevent catastrophic forgetting:
-- 5 epochs provides strong domain adaptation without forgetting general knowledge
-- More than 5-7 epochs risks catastrophic forgetting of the base model's capabilities
-- Step-based training provides predictable time/cost estimates
-- Standard best practice for continued pretraining in LLM research
+**Note on Training Duration**: `max_steps: 4260` = 5 epochs through 446M tokens. This is the recommended balance to prevent catastrophic forgetting (see `docs/PREVENTING_CATASTROPHIC_FORGETTING.md`).
 
-#### Fast CPT Training Option (45-60 minutes)
-
-For faster iteration and prototyping, use the **Fast CPT Training** approach:
+#### Fast CPT variant (4-6 hours on RTX Pro 6000)
 
 ```bash
-# Automated workflow with FP8 (default)
+# 2 epochs, 3072-token sequences, ~75-80% quality of full CPT
 ./scripts/run_fast_cpt_training.sh
 
-# Or with NVFP4 for 50% memory savings
+# With NVFP4 (recommended on RTX Pro 6000)
 PRECISION=nvfp4 ./scripts/run_fast_cpt_training.sh
 ```
 
-This implements a rapid training approach that achieves 45-60 minute training time:
-- Runs 2 epochs through the 446M token corpus (2,270 steps)
-- Uses 3072-token sequences (vs 4096)
-- Same hardware: 4x B200 GPUs
-- Cost: ~$35
-- Supports both FP8 and NVFP4 precision modes
+Use fast CPT for rapid prototyping before committing to full training.
+See `docs/FAST_TRAINING_OPTIONS.md` for a comparison of 7 approaches.
 
-**When to use:**
-- ✅ Rapid prototyping and testing
-- ✅ Budget-conscious projects (~$35 vs $85)
-- ✅ Time-sensitive deployments
-- ✅ Initial experimentation before full training
+**Legacy DeepSpeed**: `USE_FSDP=false ./scripts/run_training.sh cpt`
 
-**See**: `docs/FAST_TRAINING_OPTIONS.md` for detailed comparison of 7 different strategies.
+---
 
-### Phase 3: SFT Training (4x B200 GPUs)
+### Phase 3: SFT Training (4x RTX Pro 6000)
+
+**Location**: 4x RTX Pro 6000 (96GB GDDR7 each)
 
 ```bash
-# Launch training with FSDP2 + FP8 (default)
+# FSDP2 + FP8 (only supported quantization mode on RTX Pro 6000)
 ./scripts/run_training.sh sft
 
-# Or with NVFP4 for 50% memory savings
-PRECISION=nvfp4 ./scripts/run_training.sh sft
+# Run both Phase 2 + Phase 3 back-to-back
+./scripts/run_training.sh both
 ```
 
 Or run directly:
 ```bash
-# FP8 (default)
 torchrun --nproc_per_node=4 scripts/train_sft.py \
   --config configs/sft_config.yaml \
-  --fsdp \
-  --fsdp_config sft \
-  --use_fp8 \
-  --precision fp8
-
-# NVFP4 (experimental, 50% memory savings)
-torchrun --nproc_per_node=4 scripts/train_sft.py \
-  --config configs/sft_config.yaml \
-  --fsdp \
-  --fsdp_config sft \
-  --use_fp8 \
-  --precision nvfp4
+  --fsdp_config configs/fsdp_config.json \
+  --use_fp8 --precision fp8
 ```
 
-**Training Time**: ~6-8 hours (FP8 or NVFP4)
-**Memory Usage**: ~40GB per GPU (FP8) or ~20GB per GPU (NVFP4)
-**Throughput**: ~150-180K tokens/sec
+| | FP8 |
+|--|-----|
+| **Memory/GPU** | ~40GB (42% of 96GB GDDR7) |
+| **Training time** | 6-8 hours |
+| **Epochs** | 3 |
+| **Seq length** | 2048 tokens |
 
-**Legacy DeepSpeed Support**: Set `USE_FSDP=false` if needed:
-```bash
-USE_FSDP=false ./scripts/run_training.sh sft
-```
+> **Note**: NVFP4 is **not supported** on RTX Pro 6000. Use `run_training_b200.sh` for NVFP4 (Phase 5, B200).
+
+SFT loads from the Phase 2 CPT checkpoint (`checkpoints/cpt/final`). Ensure Phase 2 has completed before running Phase 3.
+
+**Legacy DeepSpeed**: `USE_FSDP=false ./scripts/run_training.sh sft`
+
+---
 
 ### Phase 4: Evaluation
 
+**Location**: Any machine with GPU access (or CPU for small test sets)
+
 ```bash
+# Evaluate Phase 3 SFT model
 python scripts/evaluate_model.py \
-  --model_path models/llama33-70b-eurlex-sft-final \
-  --eval_dataset data/sft/validation/sft_test.jsonl \
+  --model_path checkpoints/sft/final \
+  --eval_dataset data/sft/validation/sft_val.jsonl \
   --output_file results/evaluation_report.json
+
+# Evaluate Phase 5 advanced model (if available)
+python scripts/evaluate_model.py \
+  --model_path checkpoints/sft_b200/final \
+  --eval_dataset data/sft/validation/sft_val.jsonl \
+  --output_file results/evaluation_report_b200.json
+```
+
+**Compare base model vs fine-tuned**:
+```bash
+python scripts/generate_test_set.py \
+  --output_file data/test/test_qna_100.jsonl \
+  --questions_per_language 20
+
+python scripts/compare_models.py \
+  --base_model meta-llama/Llama-3.3-70B-Instruct \
+  --finetuned_model checkpoints/sft/final \
+  --test_dataset data/test/test_qna_100.jsonl \
+  --output_dir results/model_comparison
+```
+
+See [Model Comparison & QnA Testing](#model-comparison--qna-testing) for full details.
+
+---
+
+### Phase 5: Advanced CPT and SFT Training (4x B200)
+
+**Location**: 4x NVIDIA B200 (192GB HBM3e each)
+
+Phase 5 leverages B200's larger memory and bandwidth for:
+- **Longer context**: 8192-token CPT (vs 4096) and 4096-token SFT (vs 2048)
+- **More training**: 10 CPT epochs (vs 5) + 5 SFT epochs (vs 3)
+- **NVFP4 as default**: Production-ready on B200 (vs experimental on RTX Pro 6000)
+- **Warm start**: Optionally continues from Phase 2/3 checkpoints
+
+```bash
+# Run both advanced CPT + SFT (NVFP4 default, ~5-7 hours total)
+./scripts/run_training_b200.sh both
+
+# Advanced CPT only
+./scripts/run_training_b200.sh cpt
+
+# Advanced SFT only (requires CPT checkpoint)
+./scripts/run_training_b200.sh sft
+
+# Warm-start from Phase 2 CPT checkpoint
+CPT_WARMSTART=checkpoints/cpt/final ./scripts/run_training_b200.sh both
+
+# FP8 instead of NVFP4
+PRECISION=fp8 ./scripts/run_training_b200.sh both
+```
+
+Or run directly:
+```bash
+# Advanced CPT: 8192-token sequences, 10 epochs
+torchrun --nproc_per_node=4 scripts/train_cpt.py \
+  --config configs/cpt_config_b200.yaml \
+  --fsdp_config configs/fsdp_config.json \
+  --use_fp8 --precision nvfp4
+
+# Advanced SFT: 4096-token sequences, 5 epochs
+torchrun --nproc_per_node=4 scripts/train_sft.py \
+  --config configs/sft_config_b200.yaml \
+  --fsdp_config configs/fsdp_config.json \
+  --use_fp8 --precision nvfp4
+```
+
+| | Advanced CPT (B200) | Advanced SFT (B200) |
+|--|---------------------|---------------------|
+| **Config** | `cpt_config_b200.yaml` | `sft_config_b200.yaml` |
+| **Memory/GPU (NVFP4)** | ~50GB (26% of 192GB) | ~30GB (16% of 192GB) |
+| **Memory/GPU (FP8)** | ~90GB (47% of 192GB) | ~55GB (29% of 192GB) |
+| **Seq length** | 8192 tokens | 4096 tokens |
+| **Training** | 8,520 steps (10 epochs) | 5 epochs |
+| **Est. time** | 3-4 hours | 2-3 hours |
+| **Script** | `run_training_b200.sh cpt` | `run_training_b200.sh sft` |
+
+**Outputs**:
+- CPT checkpoint: `checkpoints/cpt_b200/final`
+- SFT checkpoint: `checkpoints/sft_b200/final`
+
+**Compare RTX vs B200 results**:
+```bash
+python scripts/compare_models.py \
+  --base_model checkpoints/sft/final \
+  --finetuned_model checkpoints/sft_b200/final \
+  --test_dataset data/test/test_qna_100.jsonl \
+  --output_dir results/rtx_vs_b200
 ```
 
 ## Model Comparison & QnA Testing
@@ -752,32 +816,40 @@ During continued pretraining, it's critical to prevent **catastrophic forgetting
 
 ## Configuration
 
-### CPT Training Configuration
+### CPT Training Configurations
 
-See `configs/cpt_config.yaml`:
+**Phase 2 — RTX Pro 6000** (`configs/cpt_config.yaml`):
 - Sequence Length: 4096 tokens
 - Batch Size: 2 per GPU × 4 GPUs × 16 grad_accum = 128 global
 - Learning Rate: 2e-5 with cosine schedule
 - **Training Steps: 4,260** (5 epochs through 446M tokens)
 - Warmup Steps: 426 (10% of max_steps)
+- Precision: `fp8` only (NVFP4 not supported on RTX Pro 6000)
 
-**Why 5 epochs?**
-- Balanced to prevent catastrophic forgetting of base model knowledge
-- 2-5 epochs is optimal for continued pretraining on domain-specific data
-- More than 5-7 epochs risks losing general capabilities
-- Step-based training (4,260 steps) provides predictable time/cost estimates
+**Phase 5 — B200 Advanced** (`configs/cpt_config_b200.yaml`):
+- Sequence Length: **8192 tokens** (2x RTX Pro 6000)
+- Batch Size: **4 per GPU** × 4 GPUs × 8 grad_accum = 128 global
+- Learning Rate: **1e-5** (lower — refined continued pretraining)
+- **Training Steps: 8,520** (10 epochs — deeper domain adaptation)
+- Precision default: `nvfp4` (production-ready on B200)
 
-### SFT Training Configuration
+**Why 5 epochs for Phase 2?** Balanced to prevent catastrophic forgetting — see `docs/PREVENTING_CATASTROPHIC_FORGETTING.md`.
 
-See `configs/sft_config.yaml`:
+### SFT Training Configurations
+
+**Phase 3 — RTX Pro 6000** (`configs/sft_config.yaml`):
 - Sequence Length: 2048 tokens
 - Batch Size: 4 per GPU × 4 GPUs × 8 grad_accum = 128 global
 - Learning Rate: 5e-6 with cosine schedule
-- **Epochs: 3** (epoch-based for fine-tuning)
+- **Epochs: 3** (standard instruction fine-tuning)
+- Precision: `fp8` only (NVFP4 not supported on RTX Pro 6000)
 
-**Why epochs for SFT?**
-- SFT uses `num_train_epochs` because we want controlled passes over the curated Q&A dataset
-- 3 epochs is standard for instruction fine-tuning to prevent overfitting
+**Phase 5 — B200 Advanced** (`configs/sft_config_b200.yaml`):
+- Sequence Length: **4096 tokens** (2x Phase 3)
+- Batch Size: **8 per GPU** × 4 GPUs × 4 grad_accum = 128 global
+- Learning Rate: **2e-6** (lower — refined SFT from stronger CPT base)
+- **Epochs: 5**
+- Precision default: `nvfp4`
 
 ### FSDP2 Configuration
 
@@ -792,7 +864,7 @@ PyTorch FSDP2 with Transformer Engine:
 - **Communication Overlap**: Enabled via backward prefetch
 - **Transformer Engine**: Automatic quantization of forward/backward passes
 
-**NVIDIA's Recommended Stack for Blackwell**: This configuration (FSDP2 + Transformer Engine) is used in NeMo 2.0 and Megatron-Core for optimal performance on B200 GPUs.
+**NVIDIA's Recommended Stack for Blackwell**: This configuration (FSDP2 + Transformer Engine) is used in NeMo 2.0 and Megatron-Core for optimal performance on both RTX Pro 6000 and B200 GPUs.
 
 **Legacy DeepSpeed Support**: DeepSpeed ZeRO-3 configs are maintained for backward compatibility. See `configs/ds_config_zero3.json`.
 
@@ -824,11 +896,11 @@ PyTorch FSDP2 with Transformer Engine:
 
 ### Comparison
 
-| Mode | CPT Memory/GPU | SFT Memory/GPU | Savings vs BF16 | Quality |
-|------|----------------|----------------|-----------------|---------|
-| BF16 (baseline) | ~140GB | ~80GB | 0% | 100% |
-| **FP8 (default)** | **~70GB** | **~40GB** | **50%** | **100%** |
-| NVFP4 (experimental) | ~35GB | ~20GB | 75% | 95-98% |
+| Mode | CPT Memory/GPU | SFT Memory/GPU | Savings vs BF16 | Quality | Hardware |
+|------|----------------|----------------|-----------------|---------|----------|
+| BF16 (baseline) | ~140GB | ~80GB | 0% | 100% | All |
+| **FP8** | **~70GB** | **~40GB** | **50%** | **100%** | All (H100+, RTX Pro 6000, B200) |
+| NVFP4 | ~35GB | ~20GB | 75% | 95-98% | **B200/B100 only** |
 
 **FSDP2 vs DeepSpeed**: FSDP2 provides equivalent or better performance with native PyTorch integration, better debugging tools, and improved communication overlap on Blackwell GPUs.
 
@@ -863,37 +935,38 @@ PyTorch FSDP2 with Transformer Engine:
 - ✓ Valid CELEX references: >95%
 - ✓ Multilingual balance: All languages represented
 
-### Training Performance (4x B200 GPUs)
+### Training Performance
 
-**CPT Training Metrics (FP8 mode):**
-- ✓ Training time: 2.5-3 hours (balanced 5 epochs)
-- ✓ Total steps: 4,260 (5 epochs through 446M tokens)
-- ✓ Throughput: 80,000-100,000 tokens/second
-- ✓ GPU memory per device: ~70GB (88% utilization)
-- ✓ Training loss: Steady decrease from ~3.5 to ~2.0
-- ✓ Validation perplexity: Final <15 (target: <15)
-- ✓ Gradient norm: Stable <5.0
-- ✓ No OOM errors
-- ✓ Checkpoints saved: Every 1000 steps (~4 checkpoints total)
-- ✓ Cost: ~$85 (vs $500 for over-trained 47 epoch approach)
+**Phase 2: CPT (4x RTX Pro 6000) — FP8 only**
 
-**CPT Training Metrics (NVFP4 mode):**
-- ✓ Training time: 2.5-3.5 hours (balanced 5 epochs)
-- ✓ GPU memory per device: ~35GB (44% utilization, 50% savings vs FP8)
-- ✓ Quality: 95-98% of FP8 (perplexity ~14.5 vs 14.2)
+| Metric | FP8 |
+|--------|-----|
+| Training time | 12-18 hours |
+| Memory/GPU | ~70GB (73% of 96GB GDDR7) |
+| Steps | 4,260 (5 epochs) |
+| Throughput | ~20-30K tokens/sec |
+| Quality | 100% |
 
-**SFT Training Metrics (FP8 mode):**
-- ✓ Training time: 6-8 hours for 3 epochs
-- ✓ Throughput: 150,000-180,000 tokens/second
-- ✓ GPU memory per device: ~40GB
-- ✓ Training loss: Converges to ~1.5-2.0
-- ✓ Input masking: ~40-50% tokens masked (only loss on responses)
-- ✓ Checkpoints: Every 500 steps (~21 checkpoints)
+> NVFP4 is not available on RTX Pro 6000 (GB202). FP8 is the only quantization mode.
 
-**SFT Training Metrics (NVFP4 mode):**
-- ✓ Training time: 6-9 hours for 3 epochs
-- ✓ GPU memory per device: ~20GB (50% savings vs FP8)
-- ✓ Quality: 95-98% of FP8 (citation accuracy ~85% vs 87%)
+**Phase 3: SFT (4x RTX Pro 6000) — FP8 only**
+
+| Metric | FP8 |
+|--------|-----|
+| Training time | 6-8 hours |
+| Memory/GPU | ~40GB (42% of 96GB GDDR7) |
+| Epochs | 3 |
+| Quality | 100% |
+
+**Phase 5: Advanced CPT + SFT (4x B200)**
+
+| Metric | Advanced CPT | Advanced SFT |
+|--------|-------------|-------------|
+| Training time | 3-4 hours | 2-3 hours |
+| Memory/GPU (NVFP4) | ~50GB (26% of 192GB) | ~30GB (16% of 192GB) |
+| Seq length | 8192 tokens | 4096 tokens |
+| Training | 8,520 steps (10 epochs) | 5 epochs |
+| Throughput | ~80-100K tokens/sec | ~150-180K tokens/sec |
 
 ### Model Quality Metrics
 
@@ -1058,13 +1131,19 @@ Example:
 ## Troubleshooting
 
 ### OOM Errors
-- **First try**: Switch from FP8 to NVFP4 for 50% memory savings
+
+**On RTX Pro 6000 (96GB GDDR7) — Phases 2 & 3:**
+- **First try**: NVFP4 for 50% memory savings (~35GB CPT / ~20GB SFT):
   ```bash
   PRECISION=nvfp4 ./scripts/run_training.sh cpt
   ```
-- Reduce `per_device_train_batch_size` in config
-- Enable CPU offload in FSDP config (set `cpu_offload.offload_params=True`)
-- Reduce `max_seq_length`
+- Reduce `per_device_train_batch_size` in `configs/cpt_config.yaml`
+- Enable CPU offload in FSDP config (`cpu_offload.offload_params: true`)
+- Reduce `max_seq_length` (e.g., 2048 for CPT)
+
+**On B200 (192GB HBM3e) — Phase 5:**
+- OOM is unlikely with NVFP4 (~50GB CPT / ~30GB SFT in 192GB)
+- If it occurs, check for memory leaks or reduce `per_device_train_batch_size` in `configs/cpt_config_b200.yaml`
 
 ### Training Instability
 - Check gradient norms (should be < 10)
@@ -1084,8 +1163,8 @@ Example:
 - Monitor FP8 scaling factors in logs (should be stable)
 - Verify environment variables: `NVTE_FP8_DPA_BWD=1` and `NVTE_ALLOW_NONDETERMINISTIC_ALGO=1`
 
-**NVFP4 Issues**:
-- **Experimental feature**: Requires Blackwell B200+ GPUs
+**NVFP4 Issues** (Phase 5 — B200 only):
+- **B200/B100 only**: Requires Blackwell data center GPU (GB100 die). **Not available on RTX Pro 6000** (GB202 die) — use `run_training.sh` with FP8 for Phases 2 & 3 instead.
 - **Loss spikes**: Normal, check if magnitude is reasonable (<10% increase)
 - **Quality degradation**: Expected 2-5%, if higher switch to FP8
 - **NaN in loss**: Reduce learning rate or switch to FP8
@@ -1105,7 +1184,7 @@ PRECISION=nvfp4 ./scripts/run_training.sh cpt
 ```
 
 ### FSDP vs DeepSpeed
-- **Default**: FSDP2 (recommended for B200 GPUs)
+- **Default**: FSDP2 (recommended for both RTX Pro 6000 and B200 GPUs)
 - **Legacy**: Use `USE_FSDP=false` to revert to DeepSpeed ZeRO-3
 - **Conversion**: Use `python -m src.utils.checkpoint_utils convert-ds-to-fsdp` to convert existing DeepSpeed checkpoints
 
@@ -1167,36 +1246,29 @@ ls -lh data/cpt/validation/
 ls -lh data/sft/train/*.jsonl | wc -l  # Should be 8
 ```
 
-**After CPT Training** (GPU Cluster):
+**After Phase 2 CPT Training** (RTX Pro 6000):
 ```bash
-# Check latest checkpoint
 ls -lht checkpoints/cpt/ | head -5
-
-# Verify final model directory
 ls -lh checkpoints/cpt/final/
-
-# Check checkpoint size
 du -sh checkpoints/cpt/final
-
-# Verify training completed successfully
 tail -100 logs/cpt_training/training.log | grep -E "Training completed|✓"
 ```
 
-**After SFT Training** (GPU Cluster):
+**After Phase 3 SFT Training** (RTX Pro 6000):
 ```bash
-# Check final model
 ls -lh checkpoints/sft/final/
-
-# Verify model files
-ls checkpoints/sft/final/*.bin checkpoints/sft/final/*.safetensors 2>/dev/null
-
-# Check training metrics
 tail -100 logs/sft_training/training.log | grep -E "eval_loss|citation_accuracy"
-
-# Quick inference test (if test script exists)
 python scripts/test_inference.py \
   --model_path checkpoints/sft/final \
   --prompt "What is GDPR Article 5?"
+```
+
+**After Phase 5 Advanced Training** (B200):
+```bash
+ls -lh checkpoints/cpt_b200/final/
+ls -lh checkpoints/sft_b200/final/
+tail -100 logs/cpt_b200_training/training.log | grep -E "Training completed|✓"
+tail -100 logs/sft_b200_training/training.log | grep -E "eval_loss|citation_accuracy"
 ```
 
 **Data Transfer Verification**:
