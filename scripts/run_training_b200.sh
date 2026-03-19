@@ -18,11 +18,37 @@
 
 set -e
 
+# Logging setup — log file named by Pacific time
+LOG_DIR="$( cd "$(dirname "$0")/.." && pwd )/logs"
+mkdir -p "$LOG_DIR"
+LOG_TIMESTAMP=$(TZ="America/Los_Angeles" date +"%Y-%m-%d_%H-%M-%S_PT")
+LOG_FILE="$LOG_DIR/training_b200_${LOG_TIMESTAMP}.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "Logging to: $LOG_FILE"
+echo ""
+
 echo "=========================================="
 echo "EUR-Lex Advanced Training (4x B200 GPUs)"
 echo "Phase 5: Advanced CPT and SFT"
 echo "=========================================="
 echo ""
+
+# Check for active virtual environment
+if [ -z "$VIRTUAL_ENV" ]; then
+    echo "Error: No python virtual environment detected."
+    echo "Please activate your environment first:"
+    echo "  source venv/bin/activate"
+    exit 1
+fi
+
+# Check for tmux session (recommended for long-running training)
+if [ -z "$TMUX" ]; then
+    echo "Error: Not running inside a tmux session."
+    echo "Training can take several hours. Please run inside tmux:"
+    echo "  tmux"
+    echo "  ./scripts/run_training_b200.sh"
+    exit 1
+fi
 
 # Configuration
 PHASE=${1:-"both"}          # cpt, sft, or both
@@ -42,7 +68,8 @@ fi
 
 # Count GPUs
 GPU_COUNT=$(nvidia-smi --list-gpus | wc -l)
-echo "Detected GPUs: $GPU_COUNT"
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
+echo "Detected GPUs: $GPU_COUNT x $GPU_NAME"
 
 if [ "$GPU_COUNT" -ne 4 ]; then
     echo "Warning: Expected 4 B200 GPUs, found $GPU_COUNT"
@@ -53,19 +80,71 @@ if [ "$GPU_COUNT" -ne 4 ]; then
     fi
 fi
 
+if [[ "$GPU_NAME" != *"B200"* ]]; then
+    echo "Warning: Expected B200 GPUs, detected: $GPU_NAME"
+    echo "NVFP4 requires Blackwell (B200) hardware. Falling back to FP8."
+    PRECISION="fp8"
+    echo ""
+fi
+
 # Display GPU info
 nvidia-smi --query-gpu=name,memory.total --format=csv
 echo ""
 
-# Set environment variables for Transformer Engine
-export NVTE_FP8_DPA_BWD=1
-export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
-export NVTE_FUSED_ATTN=1  # Enable fused attention on B200
+# Verify NVLink connectivity — on B200 all GPUs connect via NVSwitch
+echo "Checking NVLink topology..."
+if nvidia-smi topo -m 2>/dev/null | grep -q "NV"; then
+    nvidia-smi topo -m
+else
+    echo "Warning: NVLink topology not confirmed. NCCL will fall back to PCIe."
+    echo "  Expect slower all-reduce. Verify NVSwitch is functional."
+fi
+echo ""
 
-echo "Environment variables set for Transformer Engine:"
+# -----------------------------------------------------------------------
+# NCCL environment variables optimized for NVLink + B200 NVSwitch
+# -----------------------------------------------------------------------
+# P2P and shared memory
+export NCCL_P2P_DISABLE=0             # Ensure NVLink P2P is used (not PCIe fallback)
+export NCCL_SHM_DISABLE=0            # Shared memory transport enabled
+
+# NVLink SHARP (NVLS): Blackwell NVSwitch can execute collective ops in-fabric,
+# turning a multi-hop tree all-reduce into a single-step operation.
+export NCCL_NVLS_ENABLE=1
+
+# GPU Direct RDMA through NVSwitch fabric (level 5 = optimal for B200)
+export NCCL_NET_GDR_LEVEL=5
+
+# Buffer and channel tuning to saturate NVLink (~1.8 TB/s bidirectional)
+export NCCL_BUFFSIZE=8388608          # 8 MB buffer (default 4 MB is too small for NVLink BW)
+export NCCL_NCHANNELS_PER_NET_PEER=8 # More channels per peer to maximize NVSwitch utilization
+
+# Transformer Engine settings for FSDP2 + NVFP4/FP8
+export NVTE_FP8_DPA_BWD=1             # FP8 backward pass for attention
+export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
+export NVTE_FUSED_ATTN=1              # Fused attention (Flash Attention 3 on B200)
+export NVTE_FP8_AMAX_REDUCE=1         # All-reduce amax across FSDP ranks
+
+if [ "$PRECISION" == "nvfp4" ]; then
+    # Stochastic rounding improves accuracy at 4-bit without extra memory cost
+    export NVTE_FP8_STOCHASTIC_ROUNDING=1
+fi
+
+echo "NCCL environment (NVLink + NVSwitch optimized):"
+echo "  NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE            (NVLink P2P enabled)"
+echo "  NCCL_NVLS_ENABLE=$NCCL_NVLS_ENABLE              (NVLink SHARP in-fabric collectives)"
+echo "  NCCL_NET_GDR_LEVEL=$NCCL_NET_GDR_LEVEL           (GPU Direct through NVSwitch)"
+echo "  NCCL_BUFFSIZE=$NCCL_BUFFSIZE          (8MB buffer)"
+echo "  NCCL_NCHANNELS_PER_NET_PEER=$NCCL_NCHANNELS_PER_NET_PEER"
+echo ""
+echo "Transformer Engine:"
 echo "  NVTE_FP8_DPA_BWD=$NVTE_FP8_DPA_BWD"
 echo "  NVTE_ALLOW_NONDETERMINISTIC_ALGO=$NVTE_ALLOW_NONDETERMINISTIC_ALGO"
 echo "  NVTE_FUSED_ATTN=$NVTE_FUSED_ATTN"
+echo "  NVTE_FP8_AMAX_REDUCE=$NVTE_FP8_AMAX_REDUCE"
+if [ "$PRECISION" == "nvfp4" ]; then
+    echo "  NVTE_FP8_STOCHASTIC_ROUNDING=$NVTE_FP8_STOCHASTIC_ROUNDING  (NVFP4 accuracy)"
+fi
 echo ""
 
 # Verify data exists
@@ -144,6 +223,7 @@ run_cpt_b200() {
             --master_port=29500 \
             scripts/train_cpt.py \
             --config configs/cpt_config_b200.yaml \
+            --fsdp \
             --fsdp_config configs/fsdp_config.json \
             --use_fp8 \
             --precision "$PRECISION" \
@@ -242,6 +322,7 @@ run_sft_b200() {
             --master_port=29500 \
             scripts/train_sft.py \
             --config configs/sft_config_b200.yaml \
+            --fsdp \
             --fsdp_config configs/fsdp_config.json \
             --use_fp8 \
             --precision "$PRECISION" \

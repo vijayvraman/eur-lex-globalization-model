@@ -23,6 +23,8 @@ training:
   metric_for_best_model: "eval_loss"
 
   bf16: true
+  optim: "adafactor"  # Memory-efficient optimizer: no 1st moment, factored 2nd moment
+                      # AdamW FP32 states need ~130 GiB/GPU for 70B/4 — far exceeds 96 GiB
   quantization: true  # Enable quantization via Transformer Engine
   gradient_checkpointing: true
 

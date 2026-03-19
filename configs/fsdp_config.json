@@ -1,5 +1,6 @@
 {
     "transformer_layer_cls_to_wrap": "LlamaDecoderLayer",
+    "activation_checkpointing": true,
     "xla": false,
     "xla_fsdp_v2": false,
     "xla_fsdp_grad_ckpt": false

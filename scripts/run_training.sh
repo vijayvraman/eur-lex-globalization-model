@@ -6,10 +6,36 @@
 
 set -e
 
+# Logging setup — log file named by Pacific time
+LOG_DIR="$( cd "$(dirname "$0")/.." && pwd )/logs"
+mkdir -p "$LOG_DIR"
+LOG_TIMESTAMP=$(TZ="America/Los_Angeles" date +"%Y-%m-%d_%H-%M-%S_PT")
+LOG_FILE="$LOG_DIR/training_${LOG_TIMESTAMP}.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "Logging to: $LOG_FILE"
+echo ""
+
 echo "=========================================="
 echo "EUR-Lex Model Training (4x RTX Pro 6000)"
 echo "=========================================="
 echo ""
+
+# Check for active virtual environment
+if [ -z "$VIRTUAL_ENV" ]; then
+    echo "Error: No python virtual environment detected."
+    echo "Please activate your environment first:"
+    echo "  source venv/bin/activate   # virtualenv/venv"
+    exit 1
+fi
+
+# Check for tmux session (recommended for long-running training)
+if [ -z "$TMUX" ]; then
+    echo "Error: Not running inside a tmux session."
+    echo "Training can take several hours. Please run inside tmux:"
+    echo "  tmux"
+    echo "  ./scripts/run_training.sh"
+    exit 1
+fi
 
 # Configuration
 PHASE=${1:-"both"}  # cpt, sft, or both
@@ -112,6 +138,7 @@ run_cpt_training() {
             --master_port=29500 \
             scripts/train_cpt.py \
             --config configs/cpt_config.yaml \
+            --fsdp \
             --fsdp_config configs/fsdp_config.json \
             --use_fp8 \
             --precision "$PRECISION"
@@ -203,6 +230,7 @@ run_sft_training() {
             --master_port=29500 \
             scripts/train_sft.py \
             --config configs/sft_config.yaml \
+            --fsdp \
             --fsdp_config configs/fsdp_config.json \
             --use_fp8 \
             --precision "$PRECISION"

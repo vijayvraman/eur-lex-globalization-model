@@ -3,10 +3,10 @@
 
 set -e
 
-echo "================================"
+echo "================================================="
 echo "EUR-Lex Model - GPU Cluster Setup"
-echo "Training Environment (4x B200)"
-echo "================================"
+echo "Training Environment (4x RTX Pro 6000 or 4x B200)"
+echo "================================================="
 
 if [ -z "$TMUX" ]; then
     echo ""
@@ -41,7 +41,7 @@ source venv/bin/activate
 echo "Upgrading pip..."
 pip install --upgrade pip
 
-echo "Installing PyTorch with CUDA 12.8+ support (required for Blackwell/B200)..."
+echo "Installing PyTorch with CUDA 12.8+ support (required for Blackwell)..."
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 echo "Installing NVIDIA Transformer Engine (FP4/FP8 support)..."
@@ -62,9 +62,9 @@ echo "Installing DeepSpeed with FP8 quantizer support..."
 DS_BUILD_OPS=1 DS_BUILD_FP_QUANTIZER=1 pip3 install deepspeed
 
 echo ""
-echo "Verifying B200 GPU compatibility..."
+echo "Verifying GPU compatibility..."
 
-# Check CUDA version >= 12.8 (required for Blackwell/B200)
+# Check CUDA version >= 12.8 (required for Blackwell)
 python3 -c "
 import torch
 cuda_ver = torch.version.cuda
@@ -73,9 +73,9 @@ if cuda_ver is None:
     exit(1)
 major, minor = map(int, cuda_ver.split('.')[:2])
 if (major, minor) >= (12, 8):
-    print(f'✓ CUDA {cuda_ver} meets B200 requirement (>=12.8)')
+    print(f'✓ CUDA {cuda_ver} meetsBlackwell requirement (>=12.8)')
 else:
-    print(f'✗ CUDA {cuda_ver} is below B200 requirement (>=12.8)')
+    print(f'✗ CUDA {cuda_ver} is belowBlackwell requirement (>=12.8)')
     exit(1)
 "
 
@@ -97,9 +97,9 @@ import deepspeed
 from packaging.version import Version
 ds_ver = deepspeed.__version__
 if Version(ds_ver) >= Version('0.14.0'):
-    print(f'✓ DeepSpeed {ds_ver} meets B200 requirement (>=0.14.0)')
+    print(f'✓ DeepSpeed {ds_ver} meets Blackwell requirement (>=0.14.0)')
 else:
-    print(f'✗ DeepSpeed {ds_ver} is below B200 requirement (>=0.14.0)')
+    print(f'✗ DeepSpeed {ds_ver} is below Blackwell requirement (>=0.14.0)')
     exit(1)
 "
 
@@ -109,9 +109,9 @@ import flash_attn
 from packaging.version import Version
 fa_ver = flash_attn.__version__
 if Version(fa_ver) >= Version('2.6.0'):
-    print(f'✓ Flash Attention {fa_ver} meets B200 requirement (>=2.6.0)')
+    print(f'✓ Flash Attention {fa_ver} meets Blackwell requirement (>=2.6.0)')
 else:
-    print(f'✗ Flash Attention {fa_ver} is below B200 requirement (>=2.6.0)')
+    print(f'✗ Flash Attention {fa_ver} is below Blackwell requirement (>=2.6.0)')
     exit(1)
 "
 
@@ -121,10 +121,10 @@ echo "GPU Cluster Setup Complete!"
 echo "================================"
 echo ""
 echo "Environment configured for:"
-echo "  ✓ 4x B200 GPU training"
+echo "  ✓4x RTX Pro 6000 or 4x B200 GPU training"
 echo "  ✓ FP4 quantization via Transformer Engine"
 echo "  ✓ DeepSpeed ZeRO-3 distributed training"
-echo "  ✓ Flash Attention 2"
+echo "  ✓ Flash Attention 4"
 echo ""
 echo "Next steps:"
 echo "1. Transfer processed data from Mac Studio to this cluster:"

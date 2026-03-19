@@ -14,6 +14,7 @@ NVIDIA's recommended stack for Blackwell hardware (B200):
 - As used in NeMo 2.0 and Megatron-Core
 """
 
+import json
 import os
 import sys
 import logging
@@ -85,11 +86,15 @@ def setup_model(config: dict, use_fp8: bool = False, use_fsdp: bool = False):
         tokenizer.pad_token = tokenizer.eos_token
 
     # Load model
+    # All ranks load from the same checkpoint with low_cpu_mem_usage=True.
+    # Per-layer FSDP wrapping (auto_wrap + LlamaDecoderLayer) moves each ~1.75GB layer
+    # from CPU to GPU and shards it before loading the next — avoids OOM.
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch_dtype,
         attn_implementation=attn_implementation,
-        use_cache=config['model'].get('use_cache', False)
+        use_cache=config['model'].get('use_cache', False),
+        low_cpu_mem_usage=True,
     )
 
     # Enable gradient checkpointing
@@ -183,16 +188,20 @@ def main():
 
     # Conditional FSDP vs DeepSpeed configuration
     if args.fsdp:
-        # FSDP2 configuration
+        with open(args.fsdp_config) as f:
+            fsdp_file_config = json.load(f)
+
+        # FSDP2 configuration — inline dict sets defaults, fsdp_config.json overrides
         distributed_kwargs = {
-            "fsdp": "full_shard",  # FULL_SHARD strategy (ZeRO-3 equivalent)
+            "fsdp": "full_shard auto_wrap",  # FULL_SHARD + per-layer wrapping (auto_wrap enables transformer_layer_cls_to_wrap)
             "fsdp_config": {
                 "backward_prefetch": "backward_pre",  # Overlap communication
                 "forward_prefetch": False,
                 "limit_all_gathers": True,  # Reduce memory overhead
                 "use_orig_params": True,  # CRITICAL for optimizer state management
-                "sync_module_states": True,  # Sync model states across ranks
+                "sync_module_states": False,  # Each rank loads from same checkpoint; no broadcast needed
                 "transformer_layer_cls_to_wrap": "LlamaDecoderLayer",  # Auto-wrap policy
+                **fsdp_file_config,
             }
         }
     else:
@@ -200,6 +209,8 @@ def main():
         distributed_kwargs = {
             "deepspeed": args.deepspeed
         }
+
+    os.environ["TENSORBOARD_LOGGING_DIR"] = training_config.get('logging_dir', 'logs/sft_training')
 
     training_args = TrainingArguments(
         output_dir=training_config['output_dir'],
@@ -220,27 +231,17 @@ def main():
         load_best_model_at_end=training_config.get('load_best_model_at_end', True),
         metric_for_best_model=training_config.get('metric_for_best_model', 'eval_loss'),
         bf16=training_config['bf16'],
-        gradient_checkpointing=training_config['gradient_checkpointing'],
-        fsdp="full_shard auto_wrap",
-        fsdp_config=args.fsdp_config,
+        optim=training_config.get('optim', 'adafactor'),  # adafactor: no 1st moment, factored 2nd — fits in 96GB (vs AdamW fp32 needs ~130 GiB/GPU)
+        optim_args=training_config.get('optim_args', None),  # e.g. BF16 AdamW: "momentum_dtype=bfloat16,variance_dtype=bfloat16,compensation_buffer_dtype=bfloat16"
+        # With FSDP full_shard, gradient checkpointing is controlled via
+        # activation_checkpointing in fsdp_config.json, not here.
+        gradient_checkpointing=False,
+        **distributed_kwargs,
         report_to=training_config.get('report_to', 'wandb'),
-        logging_dir=training_config.get('logging_dir', 'logs/sft_training'),
         run_name=config.get('wandb', {}).get('name', 'sft-training'),
         dataloader_num_workers=config['data'].get('preprocessing_num_workers', 4),
         dataloader_pin_memory=True,
     )
-
-    # Apply FSDP wrapping if enabled
-    if args.fsdp:
-        precision_name = args.precision.upper() if args.use_fp8 else "BF16"
-        logger.info(f"Applying FSDP2 wrapping with Transformer Engine ({precision_name})...")
-        model = apply_fsdp_wrapping(
-            model,
-            fsdp_config_type=args.fsdp_config,
-            use_quantization=args.use_fp8,
-            precision_mode=args.precision
-        )
-        logger.info("FSDP2 wrapping complete")
 
     # Initialize Trainer
     trainer = Trainer(
@@ -252,30 +253,31 @@ def main():
         processing_class=tokenizer,
     )
 
-    # Log configuration
-    logger.info("=" * 80)
-    logger.info("SFT Training Configuration:")
-    logger.info(f"  Model: {config['model']['name']}")
-    logger.info(f"  Backend: {'FSDP2 + Transformer Engine' if args.fsdp else 'DeepSpeed ZeRO-3 + Transformer Engine'}")
-    logger.info(f"  Output dir: {training_config['output_dir']}")
-    logger.info(f"  Batch size per device: {training_config['per_device_train_batch_size']}")
-    logger.info(f"  Gradient accumulation: {training_config['gradient_accumulation_steps']}")
-    logger.info(f"  Effective batch size: {training_config['per_device_train_batch_size'] * training_config['gradient_accumulation_steps'] * torch.cuda.device_count()}")
-    logger.info(f"  Learning rate: {training_config['learning_rate']}")
-    logger.info(f"  Epochs: {training_config.get('num_train_epochs', 'N/A')}")
-    logger.info(f"  Input masking: Enabled (loss only on assistant responses)")
-    logger.info(f"  Quantization enabled: {args.use_fp8}")
-    if args.use_fp8:
-        logger.info(f"  Precision mode: {args.precision.upper()}")
-        if args.precision == "nvfp4":
-            logger.info(f"    → 4-bit NVFP4 (E2M1) - Experimental")
+    # Log configuration (rank 0 only to avoid duplicate output in distributed training)
+    if trainer.is_world_process_zero():
+        logger.info("=" * 80)
+        logger.info("SFT Training Configuration:")
+        logger.info(f"  Model: {config['model']['name']}")
+        logger.info(f"  Backend: {'FSDP2 + Transformer Engine' if args.fsdp else 'DeepSpeed ZeRO-3 + Transformer Engine'}")
+        logger.info(f"  Output dir: {training_config['output_dir']}")
+        logger.info(f"  Batch size per device: {training_config['per_device_train_batch_size']}")
+        logger.info(f"  Gradient accumulation: {training_config['gradient_accumulation_steps']}")
+        logger.info(f"  Effective batch size: {training_config['per_device_train_batch_size'] * training_config['gradient_accumulation_steps'] * torch.cuda.device_count()}")
+        logger.info(f"  Learning rate: {training_config['learning_rate']}")
+        logger.info(f"  Epochs: {training_config.get('num_train_epochs', 'N/A')}")
+        logger.info(f"  Input masking: Enabled (loss only on assistant responses)")
+        logger.info(f"  Quantization enabled: {args.use_fp8}")
+        if args.use_fp8:
+            logger.info(f"  Precision mode: {args.precision.upper()}")
+            if args.precision == "nvfp4":
+                logger.info(f"    → 4-bit NVFP4 (E2M1) - Experimental")
+            else:
+                logger.info(f"    → 8-bit FP8 (E4M3/E5M2) - Default")
+        if args.fsdp:
+            logger.info(f"  FSDP config type: {args.fsdp_config}")
         else:
-            logger.info(f"    → 8-bit FP8 (E4M3/E5M2) - Default")
-    if args.fsdp:
-        logger.info(f"  FSDP config type: {args.fsdp_config}")
-    else:
-        logger.info(f"  DeepSpeed config: {args.deepspeed}")
-    logger.info("=" * 80)
+            logger.info(f"  DeepSpeed config: {args.deepspeed}")
+        logger.info("=" * 80)
 
     # Start training
     logger.info("Starting SFT training...")

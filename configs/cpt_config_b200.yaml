@@ -21,6 +21,8 @@ training:
   save_total_limit: 5
 
   bf16: true
+  optim: "adamw_anyprecision"  # BF16 AdamW — moments stored in BF16 (2B each) vs FP32 (4B each); halves optimizer state from 522 GiB to 260 GiB
+  optim_args: "momentum_dtype=bfloat16,variance_dtype=bfloat16,compensation_buffer_dtype=bfloat16"
   quantization: true
   gradient_checkpointing: true
 
